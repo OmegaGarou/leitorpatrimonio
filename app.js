@@ -43,6 +43,7 @@ const LOCALIZACOES_LIST = ['Frente', 'Meio', 'Fundos'];
 const STORAGE_KEYS = {
   ANDAR: 'patrimonio_fixo_andar',
   LOCAL: 'patrimonio_fixo_local',
+  SETOR: 'patrimonio_fixo_setor',
   OPERADOR: 'patrimonio_fixo_operador',
   CLOUD_URL: 'patrimonio_google_script_url'
 };
@@ -51,7 +52,11 @@ const STORAGE_KEYS = {
 // 2. ELEMENTOS DO DOM
 // ==========================================================================
 const DOM = {
-  // Navegação
+  // Menu Expansível (Canto Superior Esquerdo) & Navegação
+  btnMenuToggle: document.getElementById('btnMenuToggle'),
+  menuStatusDot: document.getElementById('menuStatusDot'),
+  menuBackdrop: document.getElementById('menuBackdrop'),
+  floatingMenuPanel: document.getElementById('floatingMenuPanel'),
   btnNavColetas: document.getElementById('btnNavColetas'),
   btnNavExportar: document.getElementById('btnNavExportar'),
   btnConfigCloud: document.getElementById('btnConfigCloud'),
@@ -72,6 +77,7 @@ const DOM = {
   // Formulário
   selectAndar: document.getElementById('selectAndar'),
   selectLocalizacao: document.getElementById('selectLocalizacao'),
+  inputSetor: document.getElementById('inputSetor'),
   btnRegistrar: document.getElementById('btnRegistrar'),
   btnToggleManual: document.getElementById('btnToggleManual'),
   manualInputCard: document.getElementById('manualInputCard'),
@@ -88,6 +94,8 @@ const DOM = {
   modalDupCode: document.getElementById('modalDupCode'),
   modalDupAndar: document.getElementById('modalDupAndar'),
   modalDupLocal: document.getElementById('modalDupLocal'),
+  rowDupSetor: document.getElementById('rowDupSetor'),
+  modalDupSetor: document.getElementById('modalDupSetor'),
   rowDupColetor: document.getElementById('rowDupColetor'),
   modalDupColetor: document.getElementById('modalDupColetor'),
   modalDupData: document.getElementById('modalDupData'),
@@ -362,6 +370,7 @@ const DB = {
             patrimonio: normalizarPatrimonio(item.patrimonio),
             andar: item.andar || '',
             localizacao: item.localizacao || '',
+            setor: item.setor || '',
             operador: item.operador || '',
             data: item.data || '',
             timestamp: Number(item.timestamp) || Date.now(),
@@ -433,6 +442,7 @@ async function sincronizarComServidor() {
 
     if (!url) {
       isOnlineWithServer = false;
+      if (DOM.menuStatusDot) DOM.menuStatusDot.classList.add('offline');
       DOM.statusCount.style.cursor = 'pointer';
       DOM.statusCount.innerHTML = `<span style="color:#38bdf8; text-decoration:underline;">☁️ Configurar Google Drive</span> • ${locais.length} ${locais.length === 1 ? 'coleta' : 'coletas'}`;
       return false;
@@ -457,6 +467,7 @@ async function sincronizarComServidor() {
 
     if (dadosServidor !== null && Array.isArray(dadosServidor)) {
       isOnlineWithServer = true;
+      if (DOM.menuStatusDot) DOM.menuStatusDot.classList.remove('offline');
       await DB.sincronizarEspelho(dadosServidor, aindaPendentes);
       const total = (await DB.listarTodos()).length;
       DOM.statusCount.style.cursor = 'pointer';
@@ -464,6 +475,7 @@ async function sincronizarComServidor() {
       return true;
     } else {
       isOnlineWithServer = false;
+      if (DOM.menuStatusDot) DOM.menuStatusDot.classList.add('offline');
       const total = (await DB.listarTodos()).length;
       DOM.statusCount.style.cursor = 'pointer';
       DOM.statusCount.innerHTML = `<span style="color:#f59e0b;">● Modo Offline</span> • ${total} ${total === 1 ? 'coleta' : 'coletas'}`;
@@ -863,6 +875,7 @@ async function processarRegistroCodigo(rawCode, metodo = 'barcode') {
 
   const andarSelecionado = DOM.selectAndar.value;
   const localSelecionado = DOM.selectLocalizacao.value;
+  const setorNome = (DOM.inputSetor ? DOM.inputSetor.value.trim() : '') || '';
   const coletorNome = (DOM.inputColetor ? DOM.inputColetor.value.trim() : '') || '';
   const dataAtual = getDataAtualFormatada();
 
@@ -878,6 +891,7 @@ async function processarRegistroCodigo(rawCode, metodo = 'barcode') {
     patrimonio: codigoLimpo,
     andar: andarSelecionado,
     localizacao: localSelecionado,
+    setor: setorNome,
     operador: coletorNome,
     data: dataAtual,
     timestamp: Date.now(),
@@ -896,13 +910,14 @@ async function processarRegistroCodigo(rawCode, metodo = 'barcode') {
   }
 
   const sufixoMetodo = metodo === 'ocr' ? ' (lido pelo número)' : metodo === 'manual' ? ' (digitado)' : '';
+  const resumoLocal = `${andarSelecionado} • ${localSelecionado}${setorNome ? ` • ${setorNome}` : ''}`;
 
   if (apiResult.status === 201) {
     await DB.salvar({ ...novoRegistro, pendenteSync: false });
     playBeep('success');
 
     DOM.lblLastCode.textContent = `#${codigoLimpo}`;
-    DOM.lblLastDetails.textContent = `${andarSelecionado} • ${localSelecionado} ${coletorNome ? `(${coletorNome})` : ''} - ${dataAtual}`;
+    DOM.lblLastDetails.textContent = `${resumoLocal} ${coletorNome ? `(${coletorNome})` : ''} - ${dataAtual}`;
     DOM.lastScannedFeedback.style.display = 'flex';
 
     if (DOM.inputManualPatrimonio) DOM.inputManualPatrimonio.value = '';
@@ -919,7 +934,7 @@ async function processarRegistroCodigo(rawCode, metodo = 'barcode') {
   playBeep('success');
 
   DOM.lblLastCode.textContent = `#${codigoLimpo}`;
-  DOM.lblLastDetails.textContent = `${andarSelecionado} • ${localSelecionado} (${dataAtual})`;
+  DOM.lblLastDetails.textContent = `${resumoLocal} (${dataAtual})`;
   DOM.lastScannedFeedback.style.display = 'flex';
 
   if (DOM.inputManualPatrimonio) DOM.inputManualPatrimonio.value = '';
@@ -991,6 +1006,15 @@ function exibirModalDuplicidade(item) {
   DOM.modalDupLocal.textContent = item.localizacao;
   DOM.modalDupData.textContent = item.data;
 
+  if (DOM.rowDupSetor) {
+    if (item.setor) {
+      DOM.rowDupSetor.style.display = 'flex';
+      DOM.modalDupSetor.textContent = item.setor;
+    } else {
+      DOM.rowDupSetor.style.display = 'none';
+    }
+  }
+
   if (item.operador) {
     DOM.rowDupColetor.style.display = 'flex';
     DOM.modalDupColetor.textContent = item.operador;
@@ -1048,7 +1072,7 @@ async function copiarLinkEquipe() {
 }
 
 // ==========================================================================
-// 13. PERSISTÊNCIA DOS CAMPOS FIXADOS (COLETOR, ANDAR E LOCALIZAÇÃO)
+// 13. PERSISTÊNCIA DOS CAMPOS FIXADOS (COLETOR, ANDAR, LOCALIZAÇÃO E SETOR)
 // ==========================================================================
 function inicializarCamposFixados() {
   if (DOM.inputColetor) {
@@ -1060,6 +1084,17 @@ function inicializarCamposFixados() {
     };
     DOM.inputColetor.addEventListener('input', salvarOperador);
     DOM.inputColetor.addEventListener('change', salvarOperador);
+  }
+
+  if (DOM.inputSetor) {
+    const setorSalvo = localStorage.getItem(STORAGE_KEYS.SETOR) || '';
+    DOM.inputSetor.value = setorSalvo;
+
+    const salvarSetor = () => {
+      localStorage.setItem(STORAGE_KEYS.SETOR, DOM.inputSetor.value.trim());
+    };
+    DOM.inputSetor.addEventListener('input', salvarSetor);
+    DOM.inputSetor.addEventListener('change', salvarSetor);
   }
 
   DOM.selectAndar.innerHTML = '';
@@ -1113,12 +1148,14 @@ async function renderizarColetas() {
     const pat = String(item.patrimonio || '').toLowerCase();
     const and = String(item.andar || '').toLowerCase();
     const loc = String(item.localizacao || '').toLowerCase();
+    const set = String(item.setor || '').toLowerCase();
     const op = String(item.operador || '').toLowerCase();
 
     const bateTexto = !termoBusca ||
       pat.includes(termoBusca) ||
       and.includes(termoBusca) ||
       loc.includes(termoBusca) ||
+      set.includes(termoBusca) ||
       op.includes(termoBusca);
 
     const bateAndar = !filtroAndar || item.andar === filtroAndar;
@@ -1174,7 +1211,7 @@ async function renderizarColetas() {
             <div class="item-main">
               <span class="item-patrimonio">#${item.patrimonio}</span>
               <span class="item-meta">
-                ${item.operador ? `<strong style="color:var(--color-primary)">👤 ${item.operador}</strong> • ` : ''}Coletado em: ${item.data}
+                ${item.setor ? `<strong style="color:var(--color-accent)">🏷️ ${item.setor}</strong> • ` : ''}${item.operador ? `<strong style="color:var(--color-primary)">👤 ${item.operador}</strong> • ` : ''}Coletado em: ${item.data}
               </span>
             </div>
             <div class="item-actions">
@@ -1223,6 +1260,7 @@ async function exportarParaExcel() {
   const dadosFormatados = coletas.map(item => ({
     'Andar': item.andar,
     'Localização': item.localizacao,
+    'Setor': item.setor || '',
     'Coletor': item.operador || '',
     'Patrimônio': normalizarPatrimonio(item.patrimonio),
     'Data da Coleta': item.data
@@ -1241,6 +1279,7 @@ async function exportarParaExcel() {
     ws['!cols'] = [
       { wch: 16 }, // Andar
       { wch: 16 }, // Localização
+      { wch: 22 }, // Setor
       { wch: 20 }, // Coletor
       { wch: 22 }, // Patrimônio
       { wch: 16 }  // Data da Coleta
@@ -1259,9 +1298,33 @@ async function exportarParaExcel() {
 }
 
 // ==========================================================================
-// 16. NAVEGAÇÃO ENTRE AS TELAS
+// 16. MENU EXPANSÍVEL & NAVEGAÇÃO ENTRE AS TELAS
 // ==========================================================================
+function abrirMenu() {
+  if (!DOM.floatingMenuPanel) return;
+  DOM.floatingMenuPanel.style.display = 'flex';
+  if (DOM.menuBackdrop) DOM.menuBackdrop.style.display = 'block';
+  if (DOM.btnMenuToggle) DOM.btnMenuToggle.setAttribute('aria-expanded', 'true');
+}
+
+function fecharMenu() {
+  if (!DOM.floatingMenuPanel) return;
+  DOM.floatingMenuPanel.style.display = 'none';
+  if (DOM.menuBackdrop) DOM.menuBackdrop.style.display = 'none';
+  if (DOM.btnMenuToggle) DOM.btnMenuToggle.setAttribute('aria-expanded', 'false');
+}
+
+function alternarMenu() {
+  if (!DOM.floatingMenuPanel) return;
+  if (DOM.floatingMenuPanel.style.display === 'flex') {
+    fecharMenu();
+  } else {
+    abrirMenu();
+  }
+}
+
 function alternarTela(tela) {
+  fecharMenu();
   if (tela === 'coletas') {
     DOM.viewScanner.style.display = 'none';
     DOM.viewColetas.style.display = 'flex';
@@ -1291,14 +1354,30 @@ function registrarServiceWorker() {
 // 18. VINCULAÇÃO DE EVENTOS & BOOTSTRAP
 // ==========================================================================
 function bindEventos() {
+  if (DOM.btnMenuToggle) {
+    DOM.btnMenuToggle.addEventListener('click', alternarMenu);
+  }
+  if (DOM.menuBackdrop) {
+    DOM.menuBackdrop.addEventListener('click', fecharMenu);
+  }
+
   DOM.btnNavColetas.addEventListener('click', () => alternarTela('coletas'));
   DOM.btnVoltarScanner.addEventListener('click', () => alternarTela('scanner'));
-  DOM.btnNavExportar.addEventListener('click', exportarParaExcel);
+  DOM.btnNavExportar.addEventListener('click', () => {
+    fecharMenu();
+    exportarParaExcel();
+  });
 
   if (DOM.btnConfigCloud) {
-    DOM.btnConfigCloud.addEventListener('click', abrirModalCloud);
+    DOM.btnConfigCloud.addEventListener('click', () => {
+      fecharMenu();
+      abrirModalCloud();
+    });
   }
-  DOM.statusCount.addEventListener('click', abrirModalCloud);
+  DOM.statusCount.addEventListener('click', () => {
+    fecharMenu();
+    abrirModalCloud();
+  });
   DOM.btnCloseCloudModal.addEventListener('click', fecharModalCloud);
   DOM.btnSaveCloudUrl.addEventListener('click', salvarCloudUrl);
   DOM.btnCopyShareLink.addEventListener('click', copiarLinkEquipe);

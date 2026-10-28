@@ -21,8 +21,19 @@
 </head>
 <body>
 
-  <!-- Topo da Aplicação (Header Fixo) -->
-  <header class="app-header">
+  <!-- Botão Flutuante Expansível de Menu no Canto Superior Esquerdo -->
+  <button id="btnMenuToggle" class="floating-menu-btn" type="button" title="Abrir Menu" aria-label="Abrir Menu">
+    <svg id="iconMenuHamburger" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="3" y1="6" x2="21" y2="6"/>
+      <line x1="3" y1="12" x2="21" y2="12"/>
+      <line x1="3" y1="18" x2="21" y2="18"/>
+    </svg>
+    <span id="menuStatusDot" class="menu-status-dot"></span>
+  </button>
+
+  <!-- Painel Expansível do Menu Superior Esquerdo -->
+  <div id="menuBackdrop" class="menu-backdrop" style="display: none;"></div>
+  <aside id="floatingMenuPanel" class="floating-menu-panel" style="display: none;">
     <div class="header-brand">
       <div class="logo-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -41,7 +52,6 @@
       </div>
     </div>
 
-    <!-- Links de Navegação Solicitados no Topo -->
     <nav class="header-nav">
       <button id="btnNavColetas" class="nav-btn" title="Ver Coletas Realizadas">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -51,7 +61,7 @@
           <line x1="16" y1="17" x2="8" y2="17"/>
           <polyline points="10 9 9 9 8 9"/>
         </svg>
-        <span>Ver Coletas</span>
+        <span>Ver Coletas Realizadas</span>
       </button>
 
       <button id="btnNavExportar" class="nav-btn nav-btn-accent" title="Exportar para Planilha Excel">
@@ -60,36 +70,37 @@
           <polyline points="7 10 12 15 17 10"/>
           <line x1="12" y1="15" x2="12" y2="3"/>
         </svg>
-        <span>Exportar Excel</span>
+        <span>Exportar Planilha Excel</span>
       </button>
 
-      <button id="btnConfigCloud" class="nav-btn nav-btn-icon" title="Configurar Planilha Google Drive">
+      <button id="btnConfigCloud" class="nav-btn" title="Configurar Planilha Google Drive">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>
         </svg>
+        <span>Conexão Google Drive</span>
       </button>
     </nav>
-  </header>
+  </aside>
 
-  <!-- Conteúdo Principal -->
+  <!-- Conteúdo Principal Adaptado 100% à Tela do Celular -->
   <main class="main-container">
 
     <!-- ==================== TELA 1: SCANNER & REGISTRO ==================== -->
     <section id="viewScanner" class="view-section active">
       
-      <!-- Campo do Coletor / Operador (Acima do Visor da Câmera) -->
+      <!-- Topo compacto: Coletor alinhado ao lado do ícone de menu superior esquerdo -->
       <div class="coletor-card">
         <label for="inputColetor" class="coletor-label">
           <span class="label-icon">👤</span>
-          <span>Nome do Coletor:</span>
-          <span class="optional-tag">(opcional)</span>
+          <span>Coletor:</span>
+          <span class="optional-tag">(fixo)</span>
         </label>
         <div class="input-coletor-wrapper">
-          <input type="text" id="inputColetor" class="custom-input-coletor" placeholder="Digite seu nome (permanece fixo)..." autocomplete="name">
+          <input type="text" id="inputColetor" class="custom-input-coletor" placeholder="Digite seu nome..." autocomplete="name">
         </div>
       </div>
 
-      <!-- Visor da Câmera -->
+      <!-- Visor da Câmera (Flexível para se adaptar à altura da tela) -->
       <div class="camera-card">
         <div class="camera-visor-wrapper">
           <video id="cameraVideo" autoplay playsinline muted></video>
@@ -122,42 +133,49 @@
       <!-- Formulário de Coleta com Seleções Fixadas -->
       <div class="form-card">
         
-        <!-- Dropdown 1: Andar (Subsolo ao 17º andar) -->
-        <div class="form-group">
-          <label for="selectAndar" class="form-label">
-            <span class="label-icon">🏢</span>
-            <span>Andar / Local:</span>
-          </label>
-          <div class="select-wrapper">
-            <select id="selectAndar" class="custom-select">
-              <!-- Preenchido via JavaScript -->
-            </select>
-            <span class="select-arrow">▼</span>
+        <div class="form-grid-row">
+          <!-- Dropdown 1: Andar (Subsolo ao 17º andar) -->
+          <div class="form-group">
+            <label for="selectAndar" class="form-label">
+              <span class="label-icon">🏢</span>
+              <span>Andar / Local:</span>
+            </label>
+            <div class="select-wrapper">
+              <select id="selectAndar" class="custom-select">
+                <!-- Preenchido via JavaScript -->
+              </select>
+              <span class="select-arrow">▼</span>
+            </div>
+          </div>
+
+          <!-- Dropdown 2: Localização no Andar (Frente, Meio, Fundos) -->
+          <div class="form-group">
+            <label for="selectLocalizacao" class="form-label">
+              <span class="label-icon">📍</span>
+              <span>Localização:</span>
+            </label>
+            <div class="select-wrapper">
+              <select id="selectLocalizacao" class="custom-select">
+                <option value="Frente">Frente</option>
+                <option value="Meio">Meio</option>
+                <option value="Fundos">Fundos</option>
+              </select>
+              <span class="select-arrow">▼</span>
+            </div>
           </div>
         </div>
 
-        <!-- Dropdown 2: Localização no Andar (Frente, Meio, Fundos) -->
+        <!-- Campo de Escrita Livre: Setor (abaixo de Local, igual ao de Nome) -->
         <div class="form-group">
-          <label for="selectLocalizacao" class="form-label">
-            <span class="label-icon">📍</span>
-            <span>Localização no Andar:</span>
+          <label for="inputSetor" class="form-label">
+            <span class="label-icon">🏷️</span>
+            <span>Setor:</span>
+            <span class="optional-tag">(escrita livre • permanece fixo)</span>
           </label>
-          <div class="select-wrapper">
-            <select id="selectLocalizacao" class="custom-select">
-              <option value="Frente">Frente</option>
-              <option value="Meio">Meio</option>
-              <option value="Fundos">Fundos</option>
-            </select>
-            <span class="select-arrow">▼</span>
+          <div class="input-coletor-wrapper">
+            <input type="text" id="inputSetor" class="custom-input-coletor" placeholder="Digite o setor (ex: TI, RH, Recepção)..." autocomplete="off">
           </div>
         </div>
-
-        <p class="fixo-hint">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-            <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
-          </svg>
-          Andar e localização permanecem fixados até você alterá-los.
-        </p>
 
         <!-- Botão Principal: Registrar (Tirar Foto do Código de Barras / OCR do Número) -->
         <button id="btnRegistrar" class="btn-registrar" type="button">
@@ -209,7 +227,7 @@
     </section>
 
     <!-- ==================== TELA 2: LISTA DE COLETAS JÁ FEITAS ==================== -->
-    <section id="viewColetas" class="view-section" style="display: none;">
+    <section id="viewColetas" class="view-section view-coletas-section" style="display: none;">
       
       <div class="coletas-header-row">
         <div>
@@ -231,7 +249,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="search-icon">
             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
           </svg>
-          <input type="text" id="inputBusca" placeholder="Pesquisar por patrimônio ou local..." autocomplete="off">
+          <input type="text" id="inputBusca" placeholder="Pesquisar por patrimônio, setor ou local..." autocomplete="off">
         </div>
 
         <div class="filter-select-row">
@@ -289,13 +307,17 @@
             <span class="info-label">Localização:</span>
             <strong class="info-value" id="modalDupLocal">---</strong>
           </div>
+          <div class="info-row" id="rowDupSetor" style="display: none;">
+            <span class="info-label">Setor:</span>
+            <strong class="info-value" id="modalDupSetor">---</strong>
+          </div>
           <div class="info-row" id="rowDupColetor" style="display: none;">
             <span class="info-label">Coletor:</span>
             <strong class="info-value" id="modalDupColetor">---</strong>
           </div>
           <div class="info-row">
             <span class="info-label">Data da Coleta:</span>
-            <span class="info-value" id="modalDupData">---</span>
+            <span class="info-value" id="modalDupData">---</strong>
           </div>
         </div>
         <p class="modal-disclaimer">Este número já foi coletado anteriormente e <strong>não</strong> será gravado novamente.</p>
