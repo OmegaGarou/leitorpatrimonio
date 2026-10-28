@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="description" content="Sistema PWA de Coleta de Patrimônio com Leitor de Código de Barras">
+  <title>Coletor de Patrimônio</title>
+
+  <!-- PWA & Ícones -->
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" type="image/svg+xml" href="./icons/icon.svg">
+  <link rel="apple-touch-icon" href="./icons/icon.svg">
+
+  <!-- Fontes do Google -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+  <!-- Topo da Aplicação (Header Fixo) -->
+  <header class="app-header">
+    <div class="header-brand">
+      <div class="logo-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 7V5a2 2 0 0 1 2-2h2"/>
+          <path d="M17 3h2a2 2 0 0 1 2 2v2"/>
+          <path d="M21 17v2a2 2 0 0 1-2 2h-2"/>
+          <path d="M7 21H5a2 2 0 0 1-2-2v-2"/>
+          <line x1="7" y1="8" x2="7" y2="16"/>
+          <line x1="12" y1="8" x2="12" y2="16"/>
+          <line x1="17" y1="8" x2="17" y2="16"/>
+        </svg>
+      </div>
+      <div>
+        <h1 class="header-title">Leitor de Patrimônio</h1>
+        <span class="header-subtitle" id="statusCount">Carregando...</span>
+      </div>
+    </div>
+
+    <!-- Links de Navegação Solicitados no Topo -->
+    <nav class="header-nav">
+      <button id="btnNavColetas" class="nav-btn" title="Ver Coletas Realizadas">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/>
+          <line x1="16" y1="17" x2="8" y2="17"/>
+          <polyline points="10 9 9 9 8 9"/>
+        </svg>
+        <span>Ver Coletas</span>
+      </button>
+
+      <button id="btnNavExportar" class="nav-btn nav-btn-accent" title="Exportar para Planilha Excel">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        <span>Exportar Excel</span>
+      </button>
+
+      <button id="btnConfigCloud" class="nav-btn nav-btn-icon" title="Configurar Planilha Google Drive">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>
+        </svg>
+      </button>
+    </nav>
+  </header>
+
+  <!-- Conteúdo Principal -->
+  <main class="main-container">
+
+    <!-- ==================== TELA 1: SCANNER & REGISTRO ==================== -->
+    <section id="viewScanner" class="view-section active">
+      
+      <!-- Campo do Coletor / Operador (Acima do Visor da Câmera) -->
+      <div class="coletor-card">
+        <label for="inputColetor" class="coletor-label">
+          <span class="label-icon">👤</span>
+          <span>Nome do Coletor:</span>
+          <span class="optional-tag">(opcional)</span>
+        </label>
+        <div class="input-coletor-wrapper">
+          <input type="text" id="inputColetor" class="custom-input-coletor" placeholder="Digite seu nome (permanece fixo)..." autocomplete="name">
+        </div>
+      </div>
+
+      <!-- Visor da Câmera -->
+      <div class="camera-card">
+        <div class="camera-visor-wrapper">
+          <video id="cameraVideo" autoplay playsinline muted></video>
+          
+          <!-- Mira / Guias do Leitor -->
+          <div class="scanner-reticle">
+            <div class="corner corner-tl"></div>
+            <div class="corner corner-tr"></div>
+            <div class="corner corner-bl"></div>
+            <div class="corner corner-br"></div>
+            <div class="scan-laser"></div>
+            <div class="scan-instructions">Alinhe as barras aqui</div>
+          </div>
+
+          <!-- Botão de Lanterna (Flash) -->
+          <button id="btnTorch" class="torch-btn" type="button" title="Ligar/Desligar Lanterna" style="display: none;">
+            <svg id="torchIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+            </svg>
+          </button>
+
+          <!-- Status da Câmera / Permissão -->
+          <div id="cameraStatus" class="camera-status-overlay" style="display: none;">
+            <p id="cameraStatusMsg">Iniciando câmera...</p>
+            <button id="btnRetryCamera" class="btn-sm btn-outline">Tentar Novamente</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Formulário de Coleta com Seleções Fixadas -->
+      <div class="form-card">
+        
+        <!-- Dropdown 1: Andar (Subsolo ao 17º andar) -->
+        <div class="form-group">
+          <label for="selectAndar" class="form-label">
+            <span class="label-icon">🏢</span>
+            <span>Andar / Local:</span>
+          </label>
+          <div class="select-wrapper">
+            <select id="selectAndar" class="custom-select">
+              <!-- Preenchido via JavaScript -->
+            </select>
+            <span class="select-arrow">▼</span>
+          </div>
+        </div>
+
+        <!-- Dropdown 2: Localização no Andar (Frente, Meio, Fundos) -->
+        <div class="form-group">
+          <label for="selectLocalizacao" class="form-label">
+            <span class="label-icon">📍</span>
+            <span>Localização no Andar:</span>
+          </label>
+          <div class="select-wrapper">
+            <select id="selectLocalizacao" class="custom-select">
+              <option value="Frente">Frente</option>
+              <option value="Meio">Meio</option>
+              <option value="Fundos">Fundos</option>
+            </select>
+            <span class="select-arrow">▼</span>
+          </div>
+        </div>
+
+        <p class="fixo-hint">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+          </svg>
+          Andar e localização permanecem fixados até você alterá-los.
+        </p>
+
+        <!-- Botão Principal: Registrar (Tirar Foto do Código de Barras) -->
+        <button id="btnRegistrar" class="btn-registrar" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="btn-icon">
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+            <circle cx="12" cy="13" r="4"/>
+          </svg>
+          <span>REGISTRAR</span>
+        </button>
+
+        <!-- Feedback de Último Registro -->
+        <div id="lastScannedFeedback" class="last-scanned-card" style="display: none;">
+          <div class="feedback-badge">Última Coleta</div>
+          <div class="feedback-content">
+            <span class="feedback-code" id="lblLastCode">---</span>
+            <span class="feedback-details" id="lblLastDetails">---</span>
+          </div>
+        </div>
+
+      </div>
+
+    </section>
+
+    <!-- ==================== TELA 2: LISTA DE COLETAS JÁ FEITAS ==================== -->
+    <section id="viewColetas" class="view-section" style="display: none;">
+      
+      <div class="coletas-header-row">
+        <div>
+          <h2 class="view-title">Coletas Realizadas</h2>
+          <p class="view-subtitle">Da mais recente para a mais antiga, organizadas por Andar e Local.</p>
+        </div>
+        <button id="btnVoltarScanner" class="btn-sm btn-outline">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <line x1="19" y1="12" x2="5" y2="12"/>
+            <polyline points="12 19 5 12 12 5"/>
+          </svg>
+          <span>Voltar ao Leitor</span>
+        </button>
+      </div>
+
+      <!-- Filtros Rápidos / Busca -->
+      <div class="coletas-filters">
+        <div class="search-input-wrapper">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="search-icon">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input type="text" id="inputBusca" placeholder="Pesquisar por patrimônio ou local..." autocomplete="off">
+        </div>
+
+        <div class="filter-select-row">
+          <select id="filterAndar" class="custom-select select-compact">
+            <option value="">Todos os Andares</option>
+          </select>
+          <select id="filterLocal" class="custom-select select-compact">
+            <option value="">Todos os Locais</option>
+            <option value="Frente">Frente</option>
+            <option value="Meio">Meio</option>
+            <option value="Fundos">Fundos</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Estatísticas Resumidas -->
+      <div class="stats-bar">
+        <div class="stat-pill">
+          <span>Total Coletado:</span>
+          <strong id="totalCountPill">0</strong>
+        </div>
+        <button id="btnLimparTudo" class="btn-text-danger" title="Excluir todas as coletas">
+          Limpar Base
+        </button>
+      </div>
+
+      <!-- Container da Lista de Coletas -->
+      <div id="coletasContainer" class="coletas-list">
+        <!-- Renderizado dinamicamente pelo JS -->
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- ==================== MODAL DE DUPLICIDADE (SOLICITADO) ==================== -->
+  <div id="modalDuplicidade" class="modal-backdrop" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-icon-warning">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/>
+          <line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+      </div>
+      <h3 class="modal-title">Patrimônio já registrado!</h3>
+      <div class="modal-body">
+        <p class="modal-patrimonio-code" id="modalDupCode">PATRIMÔNIO: #000000</p>
+        <div class="modal-info-box">
+          <div class="info-row">
+            <span class="info-label">Andar:</span>
+            <strong class="info-value" id="modalDupAndar">---</strong>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Localização:</span>
+            <strong class="info-value" id="modalDupLocal">---</strong>
+          </div>
+          <div class="info-row" id="rowDupColetor" style="display: none;">
+            <span class="info-label">Coletor:</span>
+            <strong class="info-value" id="modalDupColetor">---</strong>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Data da Coleta:</span>
+            <span class="info-value" id="modalDupData">---</span>
+          </div>
+        </div>
+        <p class="modal-disclaimer">Este número já foi coletado anteriormente e <strong>não</strong> será gravado novamente.</p>
+      </div>
+      <button id="btnModalOk" class="btn-modal-ok" type="button">OK</button>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL CONFIGURAÇÃO GOOGLE DRIVE ==================== -->
+  <div id="modalCloudConfig" class="modal-backdrop" style="display: none;">
+    <div class="modal-card modal-card-cloud">
+      <div class="modal-icon-cloud">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>
+        </svg>
+      </div>
+      <h3 class="modal-title">Conexão Google Drive</h3>
+      <div class="modal-body">
+        <p class="modal-disclaimer" style="text-align: left;">
+          Cole abaixo a <strong>URL do App da Web (Apps Script)</strong> da sua Planilha do Google Drive para sincronizar todos os celulares em tempo real:
+        </p>
+        <input type="url" id="inputCloudUrl" class="custom-input-coletor" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off">
+        <button id="btnCopyShareLink" class="btn-sm btn-outline" type="button" style="width: 100%; justify-content: center; padding: 10px;">
+          🔗 Copiar Link Pronto para Equipe (WhatsApp)
+        </button>
+      </div>
+      <div style="display: flex; gap: 10px; width: 100%;">
+        <button id="btnCloseCloudModal" class="btn-sm btn-outline" type="button" style="flex: 1; justify-content: center; min-height: 48px;">Fechar</button>
+        <button id="btnSaveCloudUrl" class="btn-modal-ok" type="button" style="flex: 1; min-height: 48px; background: var(--color-primary); color: #0f172a; box-shadow: none;">Salvar e Conectar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast de Notificações Rápidas -->
+  <div id="toastNotification" class="toast-popup" style="display: none;"></div>
+
+  <!-- Canvas Invisível para Captura da Foto do Frame de Vídeo -->
+  <canvas id="photoCanvas" style="display: none;"></canvas>
+
+  <!-- Bibliotecas Locais (Garantia 100% Offline) -->
+  <script src="./js/xlsx.full.min.js"></script>
+  <script src="./js/html5-qrcode.min.js"></script>
+  <script src="./app.js"></script>
+
+</body>
+</html>
