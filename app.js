@@ -143,8 +143,15 @@ const DYNAMIC_ENDPOINT_DISCOVERY_URL = 'https://raw.githubusercontent.com/OmegaG
 let cachedDynamicApiUrl = '';
 let cachedFallbackApiUrl = '';
 
+const PADRAO_DIGITOS_PATRIMONIO = 12;
+
 function normalizarPatrimonio(valor) {
   return String(valor || '').trim().replace(/\./g, '');
+}
+
+function ehPatrimonioPadrao12Digitos(valor) {
+  const limpo = normalizarPatrimonio(valor);
+  return /^\d{12}$/.test(limpo);
 }
 
 function isUrlEndpointDiretoValido(url) {
@@ -818,41 +825,48 @@ function extrairNumeroPatrimonioDeTexto(textoBruto) {
     .replace(/[oO]/g, '0')
     .replace(/[lI|]/g, '1');
 
-  // 1º: Padrão formatado com pontos abaixo do código de barras (ex: 100.001.499.050)
+  let melhorParcial = '';
+
+  // 1º: Padrão formatado com pontos abaixo do código de barras (ex: 100.001.896.166 -> 12 dígitos)
   const regexPontuado = /\b\d{2,3}(?:[\s.]+\d{3}){2,4}\b/g;
   const matchesPontuados = texto.match(regexPontuado);
   if (matchesPontuados && matchesPontuados.length > 0) {
     for (const m of matchesPontuados) {
       const limpo = m.replace(/\D/g, '');
-      if (limpo.length >= 6 && limpo.length <= 15) {
+      if (ehPatrimonioPadrao12Digitos(limpo)) {
         return { code: limpo, partial: limpo };
+      }
+      if (limpo.length >= 4 && limpo.length > melhorParcial.length) {
+        melhorParcial = limpo;
       }
     }
   }
 
-  // 2º: Linhas contendo sequências numéricas (com ou sem espaços/pontos)
+  // 2º: Busca sequência exata de 12 dígitos em qualquer linha do OCR
+  const match12Exato = texto.match(/(?:^|\D)(\d{12})(?:\D|$)/);
+  if (match12Exato && match12Exato[1]) {
+    return { code: match12Exato[1], partial: match12Exato[1] };
+  }
+
+  // 3º: Linhas contendo sequências numéricas (com ou sem espaços/pontos)
   const linhas = texto.split(/[\r\n]+/);
-  let melhorCandidato = '';
-  let melhorParcial = '';
 
   for (const linha of linhas) {
     const apenasDigitos = linha.replace(/\D/g, '');
-    if (apenasDigitos.length >= 10 && apenasDigitos.length <= 14 && apenasDigitos.startsWith('100')) {
+    if (ehPatrimonioPadrao12Digitos(apenasDigitos)) {
       return { code: apenasDigitos, partial: apenasDigitos };
     }
-    if (apenasDigitos.length >= 6 && apenasDigitos.length <= 15) {
-      if (apenasDigitos.length > melhorCandidato.length) {
-        melhorCandidato = apenasDigitos;
-      }
-    } else if (apenasDigitos.length >= 3 && apenasDigitos.length > melhorParcial.length) {
+    // Caso a linha tenha ruído nas bordas mas contenha 12 dígitos iniciados por 100
+    const sub12 = apenasDigitos.match(/100\d{9}/);
+    if (sub12 && sub12[0]) {
+      return { code: sub12[0], partial: sub12[0] };
+    }
+    if (apenasDigitos.length >= 4 && apenasDigitos.length > melhorParcial.length) {
       melhorParcial = apenasDigitos;
     }
   }
 
-  if (melhorCandidato) {
-    return { code: melhorCandidato, partial: melhorCandidato };
-  }
-
+  // Se não atingiu os 12 números padrão, NÃO aprova leitura automática (retorna code: null)
   return { code: null, partial: melhorParcial };
 }
 
@@ -893,78 +907,100 @@ async function capturarEDecodificarFrame(onProgress) {
 
   ctx.drawImage(DOM.cameraVideo, 0, 0, width, height);
   const recorteMira = gerarCanvasRecorteMira(canvas, false);
+  let melhorParcialLido = '';
+
+  const avaliarCandidatoCamera = (rawVal) => {
+    if (!rawVal) return null;
+    const limpo = normalizarPatrimonio(rawVal).replace(/\D/g, '');
+    if (ehPatrimonioPadrao12Digitos(limpo)) {
+      return limpo;
+    }
+    if (limpo.length > melhorParcialLido.length) {
+      melhorParcialLido = limpo;
+    }
+    return null;
+  };
 
   // 1ª Tentativa: BarcodeDetector Nativo (Quadro Completo + Recorte da Mira)
   if (barcodeDetectorInstance) {
     try {
       const barcodesFull = await barcodeDetectorInstance.detect(canvas);
-      if (barcodesFull && barcodesFull.length > 0 && barcodesFull[0].rawValue) {
-        return { code: barcodesFull[0].rawValue, metodo: 'barcode', partial: '' };
+      if (barcodesFull && barcodesFull.length > 0) {
+        for (const b of barcodesFull) {
+          const valido = avaliarCandidatoCamera(b.rawValue);
+          if (valido) return { code: valido, metodo: 'barcode', partial: valido };
+        }
       }
       const barcodesCrop = await barcodeDetectorInstance.detect(recorteMira);
-      if (barcodesCrop && barcodesCrop.length > 0 && barcodesCrop[0].rawValue) {
-        return { code: barcodesCrop[0].rawValue, metodo: 'barcode', partial: '' };
+      if (barcodesCrop && barcodesCrop.length > 0) {
+        for (const b of barcodesCrop) {
+          const valido = avaliarCandidatoCamera(b.rawValue);
+          if (valido) return { code: valido, metodo: 'barcode', partial: valido };
+        }
       }
     } catch (e) {}
   }
 
   // 2ª Tentativa: Html5Qrcode Fallback (Recorte da Mira + Quadro Completo)
   const qrCrop = await tentarHtml5QrcodeEmCanvas(recorteMira);
-  if (qrCrop) {
-    return { code: qrCrop, metodo: 'barcode', partial: '' };
-  }
-  const qrFull = await tentarHtml5QrcodeEmCanvas(canvas);
-  if (qrFull) {
-    return { code: qrFull, metodo: 'barcode', partial: '' };
+  const validoQrCrop = avaliarCandidatoCamera(qrCrop);
+  if (validoQrCrop) {
+    return { code: validoQrCrop, metodo: 'barcode', partial: validoQrCrop };
   }
 
-  // 3ª Tentativa: OCR do Número Impresso Abaixo do Código de Barras
-  if (onProgress) onProgress('LENDO NÚMERO...');
-  let melhorParcialOcr = '';
+  const qrFull = await tentarHtml5QrcodeEmCanvas(canvas);
+  const validoQrFull = avaliarCandidatoCamera(qrFull);
+  if (validoQrFull) {
+    return { code: validoQrFull, metodo: 'barcode', partial: validoQrFull };
+  }
+
+  // 3ª Tentativa: OCR do Número Impresso Abaixo do Código de Barras (Exige 12 dígitos)
+  if (onProgress) onProgress('LENDO 12 DÍGITOS...');
   try {
     const worker = await initOcrWorker();
     if (worker) {
       const resNormal = await worker.recognize(recorteMira);
       const extNormal = extrairNumeroPatrimonioDeTexto(resNormal && resNormal.data ? resNormal.data.text : '');
-      if (extNormal.code) {
+      if (extNormal.code && ehPatrimonioPadrao12Digitos(extNormal.code)) {
         return { code: extNormal.code, metodo: 'ocr', partial: extNormal.code };
       }
-      if (extNormal.partial) melhorParcialOcr = extNormal.partial;
+      if (extNormal.partial && extNormal.partial.length > melhorParcialLido.length) {
+        melhorParcialLido = extNormal.partial;
+      }
 
       // Segunda passada OCR com binarização de alto contraste
       const recorteContraste = gerarCanvasRecorteMira(canvas, true);
       const resContraste = await worker.recognize(recorteContraste);
       const extContraste = extrairNumeroPatrimonioDeTexto(resContraste && resContraste.data ? resContraste.data.text : '');
-      if (extContraste.code) {
+      if (extContraste.code && ehPatrimonioPadrao12Digitos(extContraste.code)) {
         return { code: extContraste.code, metodo: 'ocr', partial: extContraste.code };
       }
-      if (extContraste.partial && extContraste.partial.length > melhorParcialOcr.length) {
-        melhorParcialOcr = extContraste.partial;
+      if (extContraste.partial && extContraste.partial.length > melhorParcialLido.length) {
+        melhorParcialLido = extContraste.partial;
       }
     }
   } catch (ocrErr) {
     console.warn('Falha na leitura OCR:', ocrErr);
   }
 
-  return { code: null, metodo: null, partial: melhorParcialOcr };
+  return { code: null, metodo: null, partial: melhorParcialLido };
 }
 
 // ==========================================================================
 // 11. AÇÃO: REGISTRAR (CÂMERA, OCR OU CAMPO MANUAL EM CASO DE ERRO)
 // ==========================================================================
-function abrirCampoManual(mensagem, valorSugerido = '') {
+function abrirCampoManual(mensagem) {
   if (!DOM.manualInputCard) return;
   if (DOM.manualInputTitle && mensagem) {
     DOM.manualInputTitle.textContent = mensagem;
   }
   DOM.manualInputCard.style.display = 'flex';
   if (DOM.inputManualPatrimonio) {
-    if (valorSugerido && !DOM.inputManualPatrimonio.value) {
-      DOM.inputManualPatrimonio.value = normalizarPatrimonio(valorSugerido);
-    }
+    // Limpa qualquer leitura parcial automática para garantir que numerações fora do padrão
+    // só sejam registradas se forem efetivamente digitadas manualmente pelo usuário
+    DOM.inputManualPatrimonio.value = '';
     setTimeout(() => {
       DOM.inputManualPatrimonio.focus();
-      DOM.inputManualPatrimonio.select();
     }, 80);
   }
 }
@@ -980,6 +1016,20 @@ async function processarRegistroCodigo(rawCode, metodo = 'barcode') {
     playBeep('error');
     showToast('Digite ou alinhe um número de patrimônio válido.', 'error');
     abrirCampoManual('⚠️ Informe o número do patrimônio para salvar:');
+    return false;
+  }
+
+  // Regra estrita: Leitura por câmera/OCR SÓ aceita o padrão de 12 números.
+  // Numeração fora do padrão só é aceita quando digitada manualmente (metodo === 'manual').
+  if (metodo !== 'manual' && !ehPatrimonioPadrao12Digitos(codigoLimpo)) {
+    playBeep('error');
+    showToast(
+      `Erro: Numeração incompleta ou fora do padrão (${codigoLimpo} tem ${codigoLimpo.length} dígitos; padrão é ${PADRAO_DIGITOS_PATRIMONIO}). Digite manualmente se desejar registrar.`,
+      'error'
+    );
+    abrirCampoManual(
+      `⚠️ ERRO: Leitura incompleta (${codigoLimpo} — ${codigoLimpo.length}/${PADRAO_DIGITOS_PATRIMONIO} dígitos). Digite manualmente abaixo:`
+    );
     return false;
   }
 
@@ -1073,13 +1123,23 @@ async function handleRegistrar() {
   try {
     const resultado = await capturarEDecodificarFrame((etapa) => setButtonStage(etapa));
 
-    if (!resultado || !resultado.code || !resultado.code.trim()) {
+    if (!resultado || !resultado.code || !ehPatrimonioPadrao12Digitos(resultado.code)) {
       playBeep('error');
-      showToast('Não foi possível ler o código de barras nem o número. Digite no campo manual abaixo.', 'error');
-      abrirCampoManual(
-        '⚠️ Não foi possível ler pela câmera — Digite o número do patrimônio abaixo:',
-        resultado ? resultado.partial : ''
-      );
+      const parcial = resultado && resultado.partial ? resultado.partial : '';
+      if (parcial) {
+        showToast(
+          `Erro: Leitura incompleta (${parcial} possui ${parcial.length} dígitos; o padrão exige 12 números). Digite manualmente caso queira registrar.`,
+          'error'
+        );
+        abrirCampoManual(
+          `⚠️ ERRO: Numeração incompleta (${parcial} — ${parcial.length}/12 dígitos). Digite manualmente abaixo:`
+        );
+      } else {
+        showToast('Não foi possível ler os 12 números do patrimônio. Digite no campo manual abaixo.', 'error');
+        abrirCampoManual(
+          '⚠️ Não foi possível ler os 12 dígitos pela câmera — Digite o patrimônio manualmente:'
+        );
+      }
       return;
     }
 
