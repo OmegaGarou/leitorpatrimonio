@@ -137,6 +137,7 @@ let isSyncing = false;
 // ==========================================================================
 // 4. CLIENTE GOOGLE DRIVE (APPS SCRIPT WEB APP / AUTO-ENDPOINT)
 // ==========================================================================
+const DYNAMIC_ENDPOINT_GITHUB_API_URL = 'https://api.github.com/repos/OmegaGarou/leitorpatrimonio/contents/endpoint.json';
 const DYNAMIC_ENDPOINT_DISCOVERY_URL = 'https://raw.githubusercontent.com/OmegaGarou/leitorpatrimonio/main/endpoint.json';
 let cachedDynamicApiUrl = '';
 
@@ -144,9 +145,24 @@ function normalizarPatrimonio(valor) {
   return String(valor || '').trim().replace(/\./g, '');
 }
 
+function isUrlEndpointDiretoValido(url) {
+  if (!url) return false;
+  const u = url.trim();
+  if (
+    u.includes('docs.google.com/spreadsheets') ||
+    u.includes('drive.google.com') ||
+    u.includes('github.io') ||
+    u.includes('serveousercontent.com') ||
+    u.includes('trycloudflare.com')
+  ) {
+    return false;
+  }
+  return u.startsWith('https://') || u.startsWith('http://') || u.startsWith('/');
+}
+
 function getCloudUrl() {
   const saved = (localStorage.getItem(STORAGE_KEYS.CLOUD_URL) || '').trim();
-  if (saved && (saved.includes('serveousercontent.com') || saved.includes('trycloudflare.com'))) {
+  if (saved && !isUrlEndpointDiretoValido(saved)) {
     localStorage.removeItem(STORAGE_KEYS.CLOUD_URL);
   } else if (saved) {
     return saved;
@@ -165,25 +181,59 @@ async function descobrirEndpointAtivo(forceRefresh = false) {
     const current = getCloudUrl();
     if (current) return current;
   }
+
+  // 1ª fonte: GitHub API em tempo real (sem cache de CDN no iOS/Safari)
   try {
-    const resp = await fetch(`${DYNAMIC_ENDPOINT_DISCOVERY_URL}?t=${Date.now()}`, { cache: 'no-store' });
-    if (resp.ok) {
-      const info = await resp.json();
+    const respApi = await fetch(`${DYNAMIC_ENDPOINT_GITHUB_API_URL}?t=${Date.now()}`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/vnd.github+json' },
+      cache: 'no-store',
+      credentials: 'omit',
+      mode: 'cors'
+    });
+    if (respApi.ok) {
+      const meta = await respApi.json();
+      if (meta && meta.content) {
+        const decoded = atob(String(meta.content).replace(/\s/g, ''));
+        const info = JSON.parse(decoded);
+        if (info && info.apiUrl) {
+          cachedDynamicApiUrl = info.apiUrl.trim();
+          return cachedDynamicApiUrl;
+        }
+      }
+    }
+  } catch (e) {}
+
+  // 2ª fonte (fallback): raw.githubusercontent.com
+  try {
+    const respRaw = await fetch(`${DYNAMIC_ENDPOINT_DISCOVERY_URL}?t=${Date.now()}`, {
+      method: 'GET',
+      cache: 'no-store',
+      credentials: 'omit',
+      mode: 'cors'
+    });
+    if (respRaw.ok) {
+      const info = await respRaw.json();
       if (info && info.apiUrl) {
         cachedDynamicApiUrl = info.apiUrl.trim();
         return cachedDynamicApiUrl;
       }
     }
   } catch (e) {}
-  return getCloudUrl() || '/api';
+
+  return getCloudUrl() || (window.location.hostname.includes('github.io') ? '' : '/api');
 }
 
 function verificarParametroUrlApi() {
   try {
     const params = new URLSearchParams(window.location.search);
     const apiParam = params.get('api');
-    if (apiParam && (apiParam.startsWith('http://') || apiParam.startsWith('https://') || apiParam.startsWith('/'))) {
-      localStorage.setItem(STORAGE_KEYS.CLOUD_URL, apiParam.trim());
+    if (apiParam) {
+      if (isUrlEndpointDiretoValido(apiParam)) {
+        localStorage.setItem(STORAGE_KEYS.CLOUD_URL, apiParam.trim());
+      } else if (apiParam.includes('serveousercontent.com')) {
+        cachedDynamicApiUrl = apiParam.trim();
+      }
       params.delete('api');
       const novaQuery = params.toString();
       const novaUrl = window.location.pathname + (novaQuery ? `?${novaQuery}` : '') + window.location.hash;
@@ -195,27 +245,30 @@ function verificarParametroUrlApi() {
 const API = {
   async registrar(item) {
     let url = await descobrirEndpointAtivo(false);
+    if (!url) url = await descobrirEndpointAtivo(true);
     if (!url) return { status: 0, error: 'URL não configurada' };
 
     const payload = { ...item, patrimonio: normalizarPatrimonio(item.patrimonio) };
 
     for (let tentativa = 1; tentativa <= 3; tentativa++) {
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 12000);
+        const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timeoutId = controller ? setTimeout(() => controller.abort(), 12000) : null;
 
         const resp = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
           body: JSON.stringify({ action: 'registrar', ...payload }),
           redirect: 'follow',
-          signal: controller.signal
+          mode: 'cors',
+          credentials: 'omit',
+          ...(controller ? { signal: controller.signal } : {})
         });
-        clearTimeout(timeoutId);
+        if (timeoutId) clearTimeout(timeoutId);
 
         if (resp.status >= 500 && tentativa < 3) {
           url = await descobrirEndpointAtivo(true);
-          await new Promise(r => setTimeout(r, 1200));
+          await new Promise(r => setTimeout(r, 1000));
           continue;
         }
 
@@ -230,7 +283,7 @@ const API = {
       } catch (e) {
         if (tentativa < 3) {
           url = await descobrirEndpointAtivo(true);
-          await new Promise(r => setTimeout(r, 1200));
+          await new Promise(r => setTimeout(r, 1000));
           continue;
         }
         return { status: 0, error: e };
@@ -241,24 +294,28 @@ const API = {
 
   async listar() {
     let url = await descobrirEndpointAtivo(false);
+    if (!url) url = await descobrirEndpointAtivo(true);
     if (!url) return null;
 
     for (let tentativa = 1; tentativa <= 3; tentativa++) {
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 12000);
+        const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timeoutId = controller ? setTimeout(() => controller.abort(), 12000) : null;
 
         const sep = url.includes('?') ? '&' : '?';
         const resp = await fetch(`${url}${sep}action=listar&t=${Date.now()}`, {
           method: 'GET',
           redirect: 'follow',
-          signal: controller.signal
+          mode: 'cors',
+          credentials: 'omit',
+          cache: 'no-store',
+          ...(controller ? { signal: controller.signal } : {})
         });
-        clearTimeout(timeoutId);
+        if (timeoutId) clearTimeout(timeoutId);
 
         if (resp.status >= 500 && tentativa < 3) {
           url = await descobrirEndpointAtivo(true);
-          await new Promise(r => setTimeout(r, 1200));
+          await new Promise(r => setTimeout(r, 1000));
           continue;
         }
 
@@ -266,11 +323,16 @@ const API = {
           const data = await resp.json();
           return Array.isArray(data) ? data : (data.items || null);
         }
+        if (tentativa < 3) {
+          url = await descobrirEndpointAtivo(true);
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+        }
         return null;
       } catch (e) {
         if (tentativa < 3) {
           url = await descobrirEndpointAtivo(true);
-          await new Promise(r => setTimeout(r, 1200));
+          await new Promise(r => setTimeout(r, 1000));
           continue;
         }
         return null;
@@ -437,7 +499,7 @@ async function sincronizarComServidor() {
   isSyncing = true;
 
   try {
-    const url = getCloudUrl();
+    const url = await descobrirEndpointAtivo(false);
     const locais = await DB.listarTodos();
 
     if (!url) {
@@ -1029,9 +1091,15 @@ function fecharModalDuplicidade() {
   DOM.modalDuplicidade.style.display = 'none';
 }
 
-function abrirModalCloud() {
-  DOM.inputCloudUrl.value = getCloudUrl();
+async function abrirModalCloud() {
+  DOM.inputCloudUrl.value = cachedDynamicApiUrl || getCloudUrl() || 'Conectado automaticamente via Google Sheets';
   DOM.modalCloudConfig.style.display = 'flex';
+  if (!cachedDynamicApiUrl) {
+    const descoberto = await descobrirEndpointAtivo(true);
+    if (descoberto) {
+      DOM.inputCloudUrl.value = descoberto;
+    }
+  }
 }
 
 function fecharModalCloud() {
@@ -1040,29 +1108,28 @@ function fecharModalCloud() {
 
 async function salvarCloudUrl() {
   const url = DOM.inputCloudUrl.value.trim();
-  if (url && !(url.startsWith('http://') || url.startsWith('https://') || url.startsWith('/'))) {
-    showToast('Insira uma URL válida (https://...)', 'error');
-    return;
+
+  if (isUrlEndpointDiretoValido(url)) {
+    localStorage.setItem(STORAGE_KEYS.CLOUD_URL, url);
+  } else {
+    // Se colou o link da planilha (docs.google.com/spreadsheets), link de túnel ou deixou em branco,
+    // usa a descoberta automática em tempo real da ponte da Planilha Google!
+    localStorage.removeItem(STORAGE_KEYS.CLOUD_URL);
+    await descobrirEndpointAtivo(true);
   }
-  localStorage.setItem(STORAGE_KEYS.CLOUD_URL, url);
+
   fecharModalCloud();
   showToast('Conectando à Planilha do Google Drive...', 'info');
   const ok = await sincronizarComServidor();
   if (ok) {
     showToast('Conectado à Planilha do Google Drive com sucesso!', 'success');
-  } else if (url) {
-    showToast('URL salva, mas não foi possível conectar. Verifique as permissões do script.', 'error');
+  } else {
+    showToast('Reconectando ao túnel da planilha... Tente novamente em alguns segundos.', 'error');
   }
 }
 
 async function copiarLinkEquipe() {
-  const url = DOM.inputCloudUrl.value.trim() || getCloudUrl();
-  if (!url || !(url.startsWith('http://') || url.startsWith('https://') || url.startsWith('/'))) {
-    showToast('Cole primeiro a URL da API/Planilha no campo acima.', 'error');
-    return;
-  }
-  const baseUrl = window.location.origin + window.location.pathname;
-  const shareUrl = `${baseUrl}?api=${encodeURIComponent(url)}`;
+  const shareUrl = `${window.location.origin}${window.location.pathname}`;
   try {
     await navigator.clipboard.writeText(shareUrl);
     showToast('Link copiado! Envie no WhatsApp da equipe para todos conectarem automaticamente.', 'success');

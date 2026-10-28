@@ -1,4 +1,4 @@
-const CACHE_NAME = 'patrimonio-pwa-v8';
+const CACHE_NAME = 'patrimonio-pwa-v9';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -39,7 +39,9 @@ self.addEventListener('fetch', (event) => {
     !event.request.url.startsWith('http') ||
     event.request.url.includes('script.google.com') ||
     event.request.url.includes('googleusercontent.com') ||
+    event.request.url.includes('api.github.com') ||
     event.request.url.includes('raw.githubusercontent.com') ||
+    event.request.url.includes('serveousercontent.com') ||
     event.request.url.includes('endpoint.json') ||
     event.request.url.includes('/api') ||
     event.request.url.includes('action=')
