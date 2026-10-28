@@ -73,6 +73,12 @@ const DOM = {
   selectAndar: document.getElementById('selectAndar'),
   selectLocalizacao: document.getElementById('selectLocalizacao'),
   btnRegistrar: document.getElementById('btnRegistrar'),
+  btnToggleManual: document.getElementById('btnToggleManual'),
+  manualInputCard: document.getElementById('manualInputCard'),
+  manualInputTitle: document.getElementById('manualInputTitle'),
+  btnCloseManual: document.getElementById('btnCloseManual'),
+  inputManualPatrimonio: document.getElementById('inputManualPatrimonio'),
+  btnSalvarManual: document.getElementById('btnSalvarManual'),
   lastScannedFeedback: document.getElementById('lastScannedFeedback'),
   lblLastCode: document.getElementById('lblLastCode'),
   lblLastDetails: document.getElementById('lblLastDetails'),
@@ -115,6 +121,8 @@ let currentTrack = null;
 let isTorchOn = false;
 let barcodeDetectorInstance = null;
 let html5QrCodeScanner = null;
+let ocrWorkerInstance = null;
+let isOcrInitializing = false;
 let isOnlineWithServer = false;
 let isSyncing = false;
 
@@ -605,14 +613,14 @@ async function alternarLanterna() {
 }
 
 // ==========================================================================
-// 10. MOTOR DE DECODIFICAÇÃO DE CÓDIGOS DE BARRAS
+// 10. MOTOR DE DECODIFICAÇÃO DE CÓDIGOS DE BARRAS + OCR DO NÚMERO IMPRESSO
 // ==========================================================================
 async function initBarcodeDetector() {
   if ('BarcodeDetector' in window) {
     try {
       const supportedFormats = await BarcodeDetector.getSupportedFormats();
       barcodeDetectorInstance = new BarcodeDetector({
-        formats: supportedFormats.length > 0 ? supportedFormats : ['code_128', 'code_39', 'ean_13', 'ean_8', 'qr_code']
+        formats: supportedFormats.length > 0 ? supportedFormats : ['code_128', 'code_39', 'ean_13', 'ean_8', 'itf', 'codabar', 'qr_code']
       });
     } catch (e) {
       barcodeDetectorInstance = null;
@@ -620,7 +628,135 @@ async function initBarcodeDetector() {
   }
 }
 
-async function capturarEDecodificarFrame() {
+async function initOcrWorker() {
+  if (ocrWorkerInstance || isOcrInitializing || !window.Tesseract) return ocrWorkerInstance;
+  isOcrInitializing = true;
+  try {
+    const worker = await window.Tesseract.createWorker('eng');
+    await worker.setParameters({
+      tessedit_char_whitelist: '0123456789.- ',
+      tessedit_pageseg_mode: '6'
+    });
+    ocrWorkerInstance = worker;
+    return ocrWorkerInstance;
+  } catch (e) {
+    console.warn('OCR indisponível:', e);
+    return null;
+  } finally {
+    isOcrInitializing = false;
+  }
+}
+
+function gerarCanvasRecorteMira(sourceCanvas, altoContraste = false) {
+  const sw = sourceCanvas.width;
+  const sh = sourceCanvas.height;
+  const cropW = Math.floor(sw * 0.86);
+  const cropH = Math.floor(sh * 0.48);
+  const cropX = Math.floor((sw - cropW) / 2);
+  const cropY = Math.floor((sh - cropH) / 2);
+
+  const outCanvas = document.createElement('canvas');
+  const targetW = Math.min(960, cropW);
+  const scale = targetW / cropW;
+  const targetH = Math.floor(cropH * scale);
+  outCanvas.width = targetW;
+  outCanvas.height = targetH;
+
+  const octx = outCanvas.getContext('2d', { willReadFrequently: true });
+  octx.drawImage(sourceCanvas, cropX, cropY, cropW, cropH, 0, 0, targetW, targetH);
+
+  if (altoContraste) {
+    const imgData = octx.getImageData(0, 0, targetW, targetH);
+    const d = imgData.data;
+    let soma = 0;
+    const totalPixels = d.length / 4;
+    for (let i = 0; i < d.length; i += 4) {
+      const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+      d[i] = lum;
+      soma += lum;
+    }
+    const media = soma / totalPixels;
+    const limiar = media * 0.92;
+    for (let i = 0; i < d.length; i += 4) {
+      const v = d[i] < limiar ? 0 : 255;
+      d[i] = v;
+      d[i + 1] = v;
+      d[i + 2] = v;
+    }
+    octx.putImageData(imgData, 0, 0);
+  }
+
+  return outCanvas;
+}
+
+function extrairNumeroPatrimonioDeTexto(textoBruto) {
+  if (!textoBruto) return { code: null, partial: '' };
+
+  const texto = String(textoBruto)
+    .replace(/[oO]/g, '0')
+    .replace(/[lI|]/g, '1');
+
+  // 1º: Padrão formatado com pontos abaixo do código de barras (ex: 100.001.499.050)
+  const regexPontuado = /\b\d{2,3}(?:[\s.]+\d{3}){2,4}\b/g;
+  const matchesPontuados = texto.match(regexPontuado);
+  if (matchesPontuados && matchesPontuados.length > 0) {
+    for (const m of matchesPontuados) {
+      const limpo = m.replace(/\D/g, '');
+      if (limpo.length >= 6 && limpo.length <= 15) {
+        return { code: limpo, partial: limpo };
+      }
+    }
+  }
+
+  // 2º: Linhas contendo sequências numéricas (com ou sem espaços/pontos)
+  const linhas = texto.split(/[\r\n]+/);
+  let melhorCandidato = '';
+  let melhorParcial = '';
+
+  for (const linha of linhas) {
+    const apenasDigitos = linha.replace(/\D/g, '');
+    if (apenasDigitos.length >= 10 && apenasDigitos.length <= 14 && apenasDigitos.startsWith('100')) {
+      return { code: apenasDigitos, partial: apenasDigitos };
+    }
+    if (apenasDigitos.length >= 6 && apenasDigitos.length <= 15) {
+      if (apenasDigitos.length > melhorCandidato.length) {
+        melhorCandidato = apenasDigitos;
+      }
+    } else if (apenasDigitos.length >= 3 && apenasDigitos.length > melhorParcial.length) {
+      melhorParcial = apenasDigitos;
+    }
+  }
+
+  if (melhorCandidato) {
+    return { code: melhorCandidato, partial: melhorCandidato };
+  }
+
+  return { code: null, partial: melhorParcial };
+}
+
+async function tentarHtml5QrcodeEmCanvas(targetCanvas) {
+  if (!window.Html5Qrcode) return null;
+  try {
+    if (!html5QrCodeScanner) {
+      let tempDiv = document.getElementById('tempQrReader');
+      if (!tempDiv) {
+        tempDiv = document.createElement('div');
+        tempDiv.id = 'tempQrReader';
+        tempDiv.style.display = 'none';
+        document.body.appendChild(tempDiv);
+      }
+      html5QrCodeScanner = new Html5Qrcode('tempQrReader');
+    }
+    const blob = await new Promise(res => targetCanvas.toBlob(res, 'image/jpeg', 0.92));
+    const file = new File([blob], 'frame.jpg', { type: 'image/jpeg' });
+    const decodedResult = await html5QrCodeScanner.scanFile(file, false);
+    return decodedResult || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function capturarEDecodificarFrame(onProgress) {
   if (!DOM.cameraVideo.videoWidth || !DOM.cameraVideo.videoHeight) {
     throw new Error('Aguardando câmera inicializar...');
   }
@@ -634,135 +770,216 @@ async function capturarEDecodificarFrame() {
   canvas.height = height;
 
   ctx.drawImage(DOM.cameraVideo, 0, 0, width, height);
+  const recorteMira = gerarCanvasRecorteMira(canvas, false);
 
-  // 1ª Tentativa: BarcodeDetector Nativo
+  // 1ª Tentativa: BarcodeDetector Nativo (Quadro Completo + Recorte da Mira)
   if (barcodeDetectorInstance) {
     try {
-      const barcodes = await barcodeDetectorInstance.detect(canvas);
-      if (barcodes && barcodes.length > 0) {
-        return barcodes[0].rawValue;
+      const barcodesFull = await barcodeDetectorInstance.detect(canvas);
+      if (barcodesFull && barcodesFull.length > 0 && barcodesFull[0].rawValue) {
+        return { code: barcodesFull[0].rawValue, metodo: 'barcode', partial: '' };
+      }
+      const barcodesCrop = await barcodeDetectorInstance.detect(recorteMira);
+      if (barcodesCrop && barcodesCrop.length > 0 && barcodesCrop[0].rawValue) {
+        return { code: barcodesCrop[0].rawValue, metodo: 'barcode', partial: '' };
       }
     } catch (e) {}
   }
 
-  // 2ª Tentativa: Html5Qrcode Fallback
-  if (window.Html5Qrcode) {
-    try {
-      if (!html5QrCodeScanner) {
-        let tempDiv = document.getElementById('tempQrReader');
-        if (!tempDiv) {
-          tempDiv = document.createElement('div');
-          tempDiv.id = 'tempQrReader';
-          tempDiv.style.display = 'none';
-          document.body.appendChild(tempDiv);
-        }
-        html5QrCodeScanner = new Html5Qrcode('tempQrReader');
-      }
-
-      const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.9));
-      const file = new File([blob], 'frame.jpg', { type: 'image/jpeg' });
-      const decodedResult = await html5QrCodeScanner.scanFile(file, false);
-      if (decodedResult) {
-        return decodedResult;
-      }
-    } catch (fallbackError) {}
+  // 2ª Tentativa: Html5Qrcode Fallback (Recorte da Mira + Quadro Completo)
+  const qrCrop = await tentarHtml5QrcodeEmCanvas(recorteMira);
+  if (qrCrop) {
+    return { code: qrCrop, metodo: 'barcode', partial: '' };
+  }
+  const qrFull = await tentarHtml5QrcodeEmCanvas(canvas);
+  if (qrFull) {
+    return { code: qrFull, metodo: 'barcode', partial: '' };
   }
 
-  return null;
+  // 3ª Tentativa: OCR do Número Impresso Abaixo do Código de Barras
+  if (onProgress) onProgress('LENDO NÚMERO...');
+  let melhorParcialOcr = '';
+  try {
+    const worker = await initOcrWorker();
+    if (worker) {
+      const resNormal = await worker.recognize(recorteMira);
+      const extNormal = extrairNumeroPatrimonioDeTexto(resNormal && resNormal.data ? resNormal.data.text : '');
+      if (extNormal.code) {
+        return { code: extNormal.code, metodo: 'ocr', partial: extNormal.code };
+      }
+      if (extNormal.partial) melhorParcialOcr = extNormal.partial;
+
+      // Segunda passada OCR com binarização de alto contraste
+      const recorteContraste = gerarCanvasRecorteMira(canvas, true);
+      const resContraste = await worker.recognize(recorteContraste);
+      const extContraste = extrairNumeroPatrimonioDeTexto(resContraste && resContraste.data ? resContraste.data.text : '');
+      if (extContraste.code) {
+        return { code: extContraste.code, metodo: 'ocr', partial: extContraste.code };
+      }
+      if (extContraste.partial && extContraste.partial.length > melhorParcialOcr.length) {
+        melhorParcialOcr = extContraste.partial;
+      }
+    }
+  } catch (ocrErr) {
+    console.warn('Falha na leitura OCR:', ocrErr);
+  }
+
+  return { code: null, metodo: null, partial: melhorParcialOcr };
 }
 
 // ==========================================================================
-// 11. AÇÃO: CLICAR EM REGISTRAR (TIRAR FOTO E SALVAR NO GOOGLE DRIVE)
+// 11. AÇÃO: REGISTRAR (CÂMERA, OCR OU CAMPO MANUAL EM CASO DE ERRO)
 // ==========================================================================
+function abrirCampoManual(mensagem, valorSugerido = '') {
+  if (!DOM.manualInputCard) return;
+  if (DOM.manualInputTitle && mensagem) {
+    DOM.manualInputTitle.textContent = mensagem;
+  }
+  DOM.manualInputCard.style.display = 'flex';
+  if (DOM.inputManualPatrimonio) {
+    if (valorSugerido && !DOM.inputManualPatrimonio.value) {
+      DOM.inputManualPatrimonio.value = normalizarPatrimonio(valorSugerido);
+    }
+    setTimeout(() => {
+      DOM.inputManualPatrimonio.focus();
+      DOM.inputManualPatrimonio.select();
+    }, 80);
+  }
+}
+
+function fecharCampoManual() {
+  if (!DOM.manualInputCard) return;
+  DOM.manualInputCard.style.display = 'none';
+}
+
+async function processarRegistroCodigo(rawCode, metodo = 'barcode') {
+  const codigoLimpo = normalizarPatrimonio(rawCode);
+  if (!codigoLimpo) {
+    playBeep('error');
+    showToast('Digite ou alinhe um número de patrimônio válido.', 'error');
+    abrirCampoManual('⚠️ Informe o número do patrimônio para salvar:');
+    return false;
+  }
+
+  const andarSelecionado = DOM.selectAndar.value;
+  const localSelecionado = DOM.selectLocalizacao.value;
+  const coletorNome = (DOM.inputColetor ? DOM.inputColetor.value.trim() : '') || '';
+  const dataAtual = getDataAtualFormatada();
+
+  // Verifica primeiro no cache local rápido se já existe
+  const existenteLocal = await DB.buscarPorPatrimonio(codigoLimpo);
+  if (existenteLocal) {
+    playBeep('error');
+    exibirModalDuplicidade(existenteLocal);
+    return false;
+  }
+
+  const novoRegistro = {
+    patrimonio: codigoLimpo,
+    andar: andarSelecionado,
+    localizacao: localSelecionado,
+    operador: coletorNome,
+    data: dataAtual,
+    timestamp: Date.now(),
+    pendenteSync: false
+  };
+
+  // Tenta registrar diretamente na Planilha do Google Drive
+  const apiResult = await API.registrar(novoRegistro);
+
+  if (apiResult.status === 409) {
+    const itemDup = (apiResult.data && apiResult.data.item) ? apiResult.data.item : novoRegistro;
+    await DB.salvar({ ...itemDup, pendenteSync: false });
+    playBeep('error');
+    exibirModalDuplicidade(itemDup);
+    return false;
+  }
+
+  const sufixoMetodo = metodo === 'ocr' ? ' (lido pelo número)' : metodo === 'manual' ? ' (digitado)' : '';
+
+  if (apiResult.status === 201) {
+    await DB.salvar({ ...novoRegistro, pendenteSync: false });
+    playBeep('success');
+
+    DOM.lblLastCode.textContent = `#${codigoLimpo}`;
+    DOM.lblLastDetails.textContent = `${andarSelecionado} • ${localSelecionado} ${coletorNome ? `(${coletorNome})` : ''} - ${dataAtual}`;
+    DOM.lastScannedFeedback.style.display = 'flex';
+
+    if (DOM.inputManualPatrimonio) DOM.inputManualPatrimonio.value = '';
+    fecharCampoManual();
+
+    showToast(`Patrimônio ${codigoLimpo}${sufixoMetodo} salvo na Planilha do Google Drive!`, 'success');
+    sincronizarComServidor();
+    return true;
+  }
+
+  // Sem sinal temporariamente: salva no dispositivo com fila de sincronização
+  novoRegistro.pendenteSync = true;
+  await DB.salvar(novoRegistro);
+  playBeep('success');
+
+  DOM.lblLastCode.textContent = `#${codigoLimpo}`;
+  DOM.lblLastDetails.textContent = `${andarSelecionado} • ${localSelecionado} (${dataAtual})`;
+  DOM.lastScannedFeedback.style.display = 'flex';
+
+  if (DOM.inputManualPatrimonio) DOM.inputManualPatrimonio.value = '';
+  fecharCampoManual();
+
+  showToast(`Patrimônio ${codigoLimpo}${sufixoMetodo} salvo no celular (será enviado ao Google Drive assim que conectar).`, 'info');
+  sincronizarComServidor();
+  return true;
+}
+
 async function handleRegistrar() {
   if (DOM.btnRegistrar.classList.contains('loading')) return;
 
   DOM.btnRegistrar.classList.add('loading');
   const originalHtml = DOM.btnRegistrar.innerHTML;
-  DOM.btnRegistrar.innerHTML = `
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="btn-icon" style="animation: spin 1s linear infinite;">
-      <circle cx="12" cy="12" r="10" stroke-dasharray="32" stroke-dashoffset="16"/>
-    </svg>
-    <span>PROCESSANDO...</span>
-  `;
+  const setButtonStage = (label) => {
+    DOM.btnRegistrar.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="btn-icon" style="animation: spin 1s linear infinite;">
+        <circle cx="12" cy="12" r="10" stroke-dasharray="32" stroke-dashoffset="16"/>
+      </svg>
+      <span>${label}</span>
+    `;
+  };
+  setButtonStage('LENDO CÓDIGO...');
 
   try {
-    const rawCode = await capturarEDecodificarFrame();
+    const resultado = await capturarEDecodificarFrame((etapa) => setButtonStage(etapa));
 
-    if (!rawCode || !rawCode.trim()) {
+    if (!resultado || !resultado.code || !resultado.code.trim()) {
       playBeep('error');
-      showToast('Nenhum código de barras detectado. Aproxime a câmera e alinhe o código na mira.', 'error');
+      showToast('Não foi possível ler o código de barras nem o número. Digite no campo manual abaixo.', 'error');
+      abrirCampoManual(
+        '⚠️ Não foi possível ler pela câmera — Digite o número do patrimônio abaixo:',
+        resultado ? resultado.partial : ''
+      );
       return;
     }
 
-    const codigoLimpo = normalizarPatrimonio(rawCode);
-    const andarSelecionado = DOM.selectAndar.value;
-    const localSelecionado = DOM.selectLocalizacao.value;
-    const coletorNome = (DOM.inputColetor ? DOM.inputColetor.value.trim() : '') || '';
-    const dataAtual = getDataAtualFormatada();
-
-    // Verifica primeiro no cache local rápido se já existe
-    const existenteLocal = await DB.buscarPorPatrimonio(codigoLimpo);
-    if (existenteLocal) {
-      playBeep('error');
-      exibirModalDuplicidade(existenteLocal);
-      return;
-    }
-
-    const novoRegistro = {
-      patrimonio: codigoLimpo,
-      andar: andarSelecionado,
-      localizacao: localSelecionado,
-      operador: coletorNome,
-      data: dataAtual,
-      timestamp: Date.now(),
-      pendenteSync: false
-    };
-
-    // Tenta registrar diretamente na Planilha do Google Drive
-    const apiResult = await API.registrar(novoRegistro);
-
-    if (apiResult.status === 409) {
-      // DUPLICIDADE NA PLANILHA DO GOOGLE DRIVE (outro coletor já registrou)
-      const itemDup = (apiResult.data && apiResult.data.item) ? apiResult.data.item : novoRegistro;
-      await DB.salvar({ ...itemDup, pendenteSync: false });
-      playBeep('error');
-      exibirModalDuplicidade(itemDup);
-      return;
-    }
-
-    if (apiResult.status === 201) {
-      await DB.salvar({ ...novoRegistro, pendenteSync: false });
-      playBeep('success');
-
-      DOM.lblLastCode.textContent = `#${codigoLimpo}`;
-      DOM.lblLastDetails.textContent = `${andarSelecionado} • ${localSelecionado} ${coletorNome ? `(${coletorNome})` : ''} - ${dataAtual}`;
-      DOM.lastScannedFeedback.style.display = 'flex';
-
-      showToast(`Patrimônio ${codigoLimpo} salvo na Planilha do Google Drive!`, 'success');
-      sincronizarComServidor();
-      return;
-    }
-
-    // Sem sinal temporariamente ou sem URL configurada: salva no dispositivo com fila de sincronização
-    novoRegistro.pendenteSync = true;
-    await DB.salvar(novoRegistro);
-    playBeep('success');
-
-    DOM.lblLastCode.textContent = `#${codigoLimpo}`;
-    DOM.lblLastDetails.textContent = `${andarSelecionado} • ${localSelecionado} (${dataAtual})`;
-    DOM.lastScannedFeedback.style.display = 'flex';
-
-    showToast(`Patrimônio ${codigoLimpo} salvo no celular (será enviado ao Google Drive assim que conectar).`, 'info');
-    sincronizarComServidor();
-
+    await processarRegistroCodigo(resultado.code, resultado.metodo || 'barcode');
   } catch (err) {
     console.error('Erro ao processar registro:', err);
-    showToast(err.message || 'Erro ao registrar o código.', 'error');
+    playBeep('error');
+    showToast(err.message || 'Erro ao ler pela câmera. Use o preenchimento manual abaixo.', 'error');
+    abrirCampoManual('⚠️ Erro na leitura pela câmera — Digite o patrimônio manualmente:');
   } finally {
     DOM.btnRegistrar.classList.remove('loading');
     DOM.btnRegistrar.innerHTML = originalHtml;
   }
+}
+
+async function handleSalvarManual() {
+  if (!DOM.inputManualPatrimonio) return;
+  const valorDigitado = normalizarPatrimonio(DOM.inputManualPatrimonio.value);
+  if (!valorDigitado) {
+    playBeep('error');
+    showToast('Digite o número do patrimônio antes de salvar.', 'error');
+    DOM.inputManualPatrimonio.focus();
+    return;
+  }
+  await processarRegistroCodigo(valorDigitado, 'manual');
 }
 
 // ==========================================================================
@@ -1094,6 +1311,30 @@ function bindEventos() {
 
   DOM.btnRegistrar.addEventListener('click', handleRegistrar);
 
+  if (DOM.btnToggleManual) {
+    DOM.btnToggleManual.addEventListener('click', () => {
+      if (DOM.manualInputCard && DOM.manualInputCard.style.display === 'flex') {
+        fecharCampoManual();
+      } else {
+        abrirCampoManual('⌨️ Digite o número do patrimônio abaixo:');
+      }
+    });
+  }
+  if (DOM.btnCloseManual) {
+    DOM.btnCloseManual.addEventListener('click', fecharCampoManual);
+  }
+  if (DOM.btnSalvarManual) {
+    DOM.btnSalvarManual.addEventListener('click', handleSalvarManual);
+  }
+  if (DOM.inputManualPatrimonio) {
+    DOM.inputManualPatrimonio.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleSalvarManual();
+      }
+    });
+  }
+
   DOM.btnModalOk.addEventListener('click', fecharModalDuplicidade);
   DOM.modalDuplicidade.addEventListener('click', (e) => {
     if (e.target === DOM.modalDuplicidade) fecharModalDuplicidade();
@@ -1136,4 +1377,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await initBarcodeDetector();
   iniciarCamera();
   registrarServiceWorker();
+  setTimeout(() => {
+    initOcrWorker();
+  }, 1500);
 });

@@ -1016,3 +1016,112 @@ body {
   to { transform: rotate(360deg); }
 }
 
+/* ==========================================================================
+   CAMPO DE PREENCHIMENTO MANUAL (FALLBACK EM CASO DE FALHA DE LEITURA)
+   ========================================================================== */
+.btn-toggle-manual {
+  width: 100%;
+  background: transparent;
+  border: 1px dashed var(--border-subtle);
+  color: var(--text-secondary);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  font-family: var(--font-family);
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-top: 2px;
+}
+
+.btn-toggle-manual:hover,
+.btn-toggle-manual:active {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: rgba(56, 189, 248, 0.06);
+}
+
+.manual-input-card {
+  width: 100%;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1.5px solid rgba(245, 158, 11, 0.55);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: popIn 0.22s ease;
+}
+
+.manual-input-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.manual-input-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #fbbf24;
+  line-height: 1.3;
+}
+
+.btn-close-manual {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.manual-input-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.custom-input-manual {
+  flex: 1;
+  min-width: 0;
+  height: 46px;
+  background-color: #0f172a;
+  border: 1.5px solid var(--border-focus);
+  border-radius: var(--radius-sm);
+  padding: 0 12px;
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  outline: none;
+}
+
+.custom-input-manual:focus {
+  border-color: #fbbf24;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
+}
+
+.btn-salvar-manual {
+  height: 46px;
+  padding: 0 16px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  color: #0f172a;
+  font-family: var(--font-family);
+  font-size: 0.92rem;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform 0.15s ease;
+}
+
+.btn-salvar-manual:active {
+  transform: scale(0.96);
+}
+
+

@@ -101,7 +101,7 @@
             <div class="corner corner-bl"></div>
             <div class="corner corner-br"></div>
             <div class="scan-laser"></div>
-            <div class="scan-instructions">Alinhe as barras aqui</div>
+            <div class="scan-instructions">Alinhe as barras ou o número aqui</div>
           </div>
 
           <!-- Botão de Lanterna (Flash) -->
@@ -159,7 +159,7 @@
           Andar e localização permanecem fixados até você alterá-los.
         </p>
 
-        <!-- Botão Principal: Registrar (Tirar Foto do Código de Barras) -->
+        <!-- Botão Principal: Registrar (Tirar Foto do Código de Barras / OCR do Número) -->
         <button id="btnRegistrar" class="btn-registrar" type="button">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="btn-icon">
             <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
@@ -167,6 +167,33 @@
           </svg>
           <span>REGISTRAR</span>
         </button>
+
+        <!-- Botão discreto para abrir digitação manual a qualquer momento -->
+        <button id="btnToggleManual" class="btn-toggle-manual" type="button">
+          ⌨️ Digitar número manualmente
+        </button>
+
+        <!-- Campo de Preenchimento Manual (Aparece automaticamente quando a leitura falha) -->
+        <div id="manualInputCard" class="manual-input-card" style="display: none;">
+          <div class="manual-input-header">
+            <span id="manualInputTitle" class="manual-input-title">⚠️ Leitura automática não concluída — Digite o patrimônio:</span>
+            <button id="btnCloseManual" class="btn-close-manual" type="button" title="Fechar campo manual">✕</button>
+          </div>
+          <div class="manual-input-row">
+            <input
+              type="text"
+              id="inputManualPatrimonio"
+              class="custom-input-manual"
+              inputmode="numeric"
+              pattern="[0-9.]*"
+              placeholder="Ex: 100004946047"
+              autocomplete="off"
+            >
+            <button id="btnSalvarManual" class="btn-salvar-manual" type="button">
+              SALVAR
+            </button>
+          </div>
+        </div>
 
         <!-- Feedback de Último Registro -->
         <div id="lastScannedFeedback" class="last-scanned-card" style="display: none;">
@@ -308,9 +335,10 @@
   <!-- Canvas Invisível para Captura da Foto do Frame de Vídeo -->
   <canvas id="photoCanvas" style="display: none;"></canvas>
 
-  <!-- Bibliotecas Locais (Garantia 100% Offline) -->
+  <!-- Bibliotecas Locais + OCR (Tesseract.js para leitura do número impresso) -->
   <script src="./js/xlsx.full.min.js"></script>
   <script src="./js/html5-qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <script src="./app.js"></script>
 
 </body>
