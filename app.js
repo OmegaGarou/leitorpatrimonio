@@ -133,6 +133,7 @@ let ocrWorkerInstance = null;
 let isOcrInitializing = false;
 let isOnlineWithServer = false;
 let isSyncing = false;
+let activeSyncPromise = null;
 
 // ==========================================================================
 // 4. CLIENTE GOOGLE DRIVE (APPS SCRIPT WEB APP / AUTO-ENDPOINT)
@@ -140,6 +141,7 @@ let isSyncing = false;
 const DYNAMIC_ENDPOINT_GITHUB_API_URL = 'https://api.github.com/repos/OmegaGarou/leitorpatrimonio/contents/endpoint.json';
 const DYNAMIC_ENDPOINT_DISCOVERY_URL = 'https://raw.githubusercontent.com/OmegaGarou/leitorpatrimonio/main/endpoint.json';
 let cachedDynamicApiUrl = '';
+let cachedFallbackApiUrl = '';
 
 function normalizarPatrimonio(valor) {
   return String(valor || '').trim().replace(/\./g, '');
@@ -153,7 +155,8 @@ function isUrlEndpointDiretoValido(url) {
     u.includes('drive.google.com') ||
     u.includes('github.io') ||
     u.includes('serveousercontent.com') ||
-    u.includes('trycloudflare.com')
+    u.includes('trycloudflare.com') ||
+    u.includes('Conectado automaticamente')
   ) {
     return false;
   }
@@ -176,13 +179,7 @@ function getCloudUrl() {
   return DEFAULT_GOOGLE_SCRIPT_URL || '/api';
 }
 
-async function descobrirEndpointAtivo(forceRefresh = false) {
-  if (!forceRefresh) {
-    const current = getCloudUrl();
-    if (current) return current;
-  }
-
-  // 1ª fonte: GitHub API em tempo real (sem cache de CDN no iOS/Safari)
+async function lerEndpointViaGithubApi() {
   try {
     const respApi = await fetch(`${DYNAMIC_ENDPOINT_GITHUB_API_URL}?t=${Date.now()}`, {
       method: 'GET',
@@ -198,13 +195,16 @@ async function descobrirEndpointAtivo(forceRefresh = false) {
         const info = JSON.parse(decoded);
         if (info && info.apiUrl) {
           cachedDynamicApiUrl = info.apiUrl.trim();
+          cachedFallbackApiUrl = (info.fallbackApiUrl || '').trim();
           return cachedDynamicApiUrl;
         }
       }
     }
   } catch (e) {}
+  return '';
+}
 
-  // 2ª fonte (fallback): raw.githubusercontent.com
+async function lerEndpointViaGithubRaw() {
   try {
     const respRaw = await fetch(`${DYNAMIC_ENDPOINT_DISCOVERY_URL}?t=${Date.now()}`, {
       method: 'GET',
@@ -216,10 +216,28 @@ async function descobrirEndpointAtivo(forceRefresh = false) {
       const info = await respRaw.json();
       if (info && info.apiUrl) {
         cachedDynamicApiUrl = info.apiUrl.trim();
+        cachedFallbackApiUrl = (info.fallbackApiUrl || '').trim();
         return cachedDynamicApiUrl;
       }
     }
   } catch (e) {}
+  return '';
+}
+
+async function descobrirEndpointAtivo(forceRefresh = false) {
+  if (!forceRefresh) {
+    const current = getCloudUrl();
+    if (current) return current;
+    const rawUrl = await lerEndpointViaGithubRaw();
+    if (rawUrl) return rawUrl;
+    const apiUrl = await lerEndpointViaGithubApi();
+    if (apiUrl) return apiUrl;
+  } else {
+    const apiUrl = await lerEndpointViaGithubApi();
+    if (apiUrl) return apiUrl;
+    const rawUrl = await lerEndpointViaGithubRaw();
+    if (rawUrl) return rawUrl;
+  }
 
   return getCloudUrl() || (window.location.hostname.includes('github.io') ? '' : '/api');
 }
@@ -253,7 +271,7 @@ const API = {
     for (let tentativa = 1; tentativa <= 3; tentativa++) {
       try {
         const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-        const timeoutId = controller ? setTimeout(() => controller.abort(), 12000) : null;
+        const timeoutId = controller ? setTimeout(() => controller.abort(), 5000) : null;
 
         const resp = await fetch(url, {
           method: 'POST',
@@ -267,8 +285,12 @@ const API = {
         if (timeoutId) clearTimeout(timeoutId);
 
         if (resp.status >= 500 && tentativa < 3) {
-          url = await descobrirEndpointAtivo(true);
-          await new Promise(r => setTimeout(r, 1000));
+          if (tentativa === 1 && cachedFallbackApiUrl && cachedFallbackApiUrl !== url) {
+            url = cachedFallbackApiUrl;
+          } else {
+            url = await descobrirEndpointAtivo(true);
+          }
+          await new Promise(r => setTimeout(r, 500));
           continue;
         }
 
@@ -282,8 +304,12 @@ const API = {
         return { status: resp.status, data };
       } catch (e) {
         if (tentativa < 3) {
-          url = await descobrirEndpointAtivo(true);
-          await new Promise(r => setTimeout(r, 1000));
+          if (tentativa === 1 && cachedFallbackApiUrl && cachedFallbackApiUrl !== url) {
+            url = cachedFallbackApiUrl;
+          } else {
+            url = await descobrirEndpointAtivo(true);
+          }
+          await new Promise(r => setTimeout(r, 500));
           continue;
         }
         return { status: 0, error: e };
@@ -292,15 +318,15 @@ const API = {
     return { status: 0, error: 'Falha após retentativas' };
   },
 
-  async listar() {
-    let url = await descobrirEndpointAtivo(false);
+  async listar(forceRefresh = false) {
+    let url = await descobrirEndpointAtivo(forceRefresh);
     if (!url) url = await descobrirEndpointAtivo(true);
     if (!url) return null;
 
     for (let tentativa = 1; tentativa <= 3; tentativa++) {
       try {
         const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-        const timeoutId = controller ? setTimeout(() => controller.abort(), 12000) : null;
+        const timeoutId = controller ? setTimeout(() => controller.abort(), 5000) : null;
 
         const sep = url.includes('?') ? '&' : '?';
         const resp = await fetch(`${url}${sep}action=listar&t=${Date.now()}`, {
@@ -314,25 +340,38 @@ const API = {
         if (timeoutId) clearTimeout(timeoutId);
 
         if (resp.status >= 500 && tentativa < 3) {
-          url = await descobrirEndpointAtivo(true);
-          await new Promise(r => setTimeout(r, 1000));
+          if (tentativa === 1 && cachedFallbackApiUrl && cachedFallbackApiUrl !== url) {
+            url = cachedFallbackApiUrl;
+          } else {
+            url = await descobrirEndpointAtivo(true);
+          }
+          await new Promise(r => setTimeout(r, 500));
           continue;
         }
 
         if (resp.ok) {
           const data = await resp.json();
+          cachedDynamicApiUrl = url;
           return Array.isArray(data) ? data : (data.items || null);
         }
         if (tentativa < 3) {
-          url = await descobrirEndpointAtivo(true);
-          await new Promise(r => setTimeout(r, 1000));
+          if (tentativa === 1 && cachedFallbackApiUrl && cachedFallbackApiUrl !== url) {
+            url = cachedFallbackApiUrl;
+          } else {
+            url = await descobrirEndpointAtivo(true);
+          }
+          await new Promise(r => setTimeout(r, 500));
           continue;
         }
         return null;
       } catch (e) {
         if (tentativa < 3) {
-          url = await descobrirEndpointAtivo(true);
-          await new Promise(r => setTimeout(r, 1000));
+          if (tentativa === 1 && cachedFallbackApiUrl && cachedFallbackApiUrl !== url) {
+            url = cachedFallbackApiUrl;
+          } else {
+            url = await descobrirEndpointAtivo(true);
+          }
+          await new Promise(r => setTimeout(r, 500));
           continue;
         }
         return null;
@@ -494,58 +533,67 @@ const DB = {
 // ==========================================================================
 // 6. SINCRONIZAÇÃO BIDIRECIONAL COM A PLANILHA DO GOOGLE DRIVE
 // ==========================================================================
-async function sincronizarComServidor() {
-  if (isSyncing || !dbInstance) return false;
-  isSyncing = true;
-
-  try {
-    const url = await descobrirEndpointAtivo(false);
-    const locais = await DB.listarTodos();
-
-    if (!url) {
-      isOnlineWithServer = false;
-      if (DOM.menuStatusDot) DOM.menuStatusDot.classList.add('offline');
-      DOM.statusCount.style.cursor = 'pointer';
-      DOM.statusCount.innerHTML = `<span style="color:#38bdf8; text-decoration:underline;">☁️ Configurar Google Drive</span> • ${locais.length} ${locais.length === 1 ? 'coleta' : 'coletas'}`;
-      return false;
-    }
-
-    // 1. Envia (push) coletas feitas offline que estavam aguardando conexão
-    const pendentes = locais.filter(i => i.pendenteSync);
-    const aindaPendentes = [];
-
-    for (const itemPendente of pendentes) {
-      const res = await API.registrar(itemPendente);
-      if (res.status === 201 || res.status === 409) {
-        itemPendente.pendenteSync = false;
-        await DB.salvar(itemPendente);
-      } else {
-        aindaPendentes.push(itemPendente);
-      }
-    }
-
-    // 2. Baixa (pull) a lista completa da Planilha do Google Drive
-    const dadosServidor = await API.listar();
-
-    if (dadosServidor !== null && Array.isArray(dadosServidor)) {
-      isOnlineWithServer = true;
-      if (DOM.menuStatusDot) DOM.menuStatusDot.classList.remove('offline');
-      await DB.sincronizarEspelho(dadosServidor, aindaPendentes);
-      const total = (await DB.listarTodos()).length;
-      DOM.statusCount.style.cursor = 'pointer';
-      DOM.statusCount.innerHTML = `<span style="color:#10b981;">● Google Drive Conectado</span> • ${total} ${total === 1 ? 'coleta' : 'coletas'}`;
-      return true;
-    } else {
-      isOnlineWithServer = false;
-      if (DOM.menuStatusDot) DOM.menuStatusDot.classList.add('offline');
-      const total = (await DB.listarTodos()).length;
-      DOM.statusCount.style.cursor = 'pointer';
-      DOM.statusCount.innerHTML = `<span style="color:#f59e0b;">● Modo Offline</span> • ${total} ${total === 1 ? 'coleta' : 'coletas'}`;
-      return false;
-    }
-  } finally {
-    isSyncing = false;
+async function sincronizarComServidor(forceRefresh = false) {
+  if (!dbInstance) return false;
+  if (activeSyncPromise) {
+    const prevResult = await activeSyncPromise;
+    if (!forceRefresh) return prevResult;
   }
+
+  isSyncing = true;
+  activeSyncPromise = (async () => {
+    try {
+      const url = await descobrirEndpointAtivo(forceRefresh);
+      const locais = await DB.listarTodos();
+
+      if (!url) {
+        isOnlineWithServer = false;
+        if (DOM.menuStatusDot) DOM.menuStatusDot.classList.add('offline');
+        DOM.statusCount.style.cursor = 'pointer';
+        DOM.statusCount.innerHTML = `<span style="color:#38bdf8; text-decoration:underline;">☁️ Configurar Google Drive</span> • ${locais.length} ${locais.length === 1 ? 'coleta' : 'coletas'}`;
+        return false;
+      }
+
+      // 1. Envia (push) coletas feitas offline que estavam aguardando conexão
+      const pendentes = locais.filter(i => i.pendenteSync);
+      const aindaPendentes = [];
+
+      for (const itemPendente of pendentes) {
+        const res = await API.registrar(itemPendente);
+        if (res.status === 201 || res.status === 409) {
+          itemPendente.pendenteSync = false;
+          await DB.salvar(itemPendente);
+        } else {
+          aindaPendentes.push(itemPendente);
+        }
+      }
+
+      // 2. Baixa (pull) a lista completa da Planilha do Google Drive
+      const dadosServidor = await API.listar(forceRefresh);
+
+      if (dadosServidor !== null && Array.isArray(dadosServidor)) {
+        isOnlineWithServer = true;
+        if (DOM.menuStatusDot) DOM.menuStatusDot.classList.remove('offline');
+        await DB.sincronizarEspelho(dadosServidor, aindaPendentes);
+        const total = (await DB.listarTodos()).length;
+        DOM.statusCount.style.cursor = 'pointer';
+        DOM.statusCount.innerHTML = `<span style="color:#10b981;">● Google Drive Conectado</span> • ${total} ${total === 1 ? 'coleta' : 'coletas'}`;
+        return true;
+      } else {
+        isOnlineWithServer = false;
+        if (DOM.menuStatusDot) DOM.menuStatusDot.classList.add('offline');
+        const total = (await DB.listarTodos()).length;
+        DOM.statusCount.style.cursor = 'pointer';
+        DOM.statusCount.innerHTML = `<span style="color:#f59e0b;">● Modo Offline</span> • ${total} ${total === 1 ? 'coleta' : 'coletas'}`;
+        return false;
+      }
+    } finally {
+      isSyncing = false;
+      activeSyncPromise = null;
+    }
+  })();
+
+  return activeSyncPromise;
 }
 
 // ==========================================================================
@@ -1120,7 +1168,7 @@ async function salvarCloudUrl() {
 
   fecharModalCloud();
   showToast('Conectando à Planilha do Google Drive...', 'info');
-  const ok = await sincronizarComServidor();
+  const ok = await sincronizarComServidor(true);
   if (ok) {
     showToast('Conectado à Planilha do Google Drive com sucesso!', 'success');
   } else {
