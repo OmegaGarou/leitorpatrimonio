@@ -1,6 +1,7 @@
 {
-  "apiUrl": "https://ae0ea69a84b6c120-187-95-97-178.serveousercontent.com/api",
-  "fallbackApiUrl": "https://67103c6c41cf1a9e-187-95-97-178.serveousercontent.com/api",
-  "tunnelUrl": "https://ae0ea69a84b6c120-187-95-97-178.serveousercontent.com",
-  "updatedAt": "2026-10-29T13:28:42.277Z"
+  "apiUrl": "https://script.google.com/macros/s/AKfycby5eBg4SFxCuKGeusvqaF2NP_Ev1-STaPHht4U4I47YOyNblUDoPBUH5IyYbLKLFQqT/exec",
+  "fallbackApiUrl": "",
+  "tunnelUrl": "https://script.google.com/macros/s/AKfycby5eBg4SFxCuKGeusvqaF2NP_Ev1-STaPHht4U4I47YOyNblUDoPBUH5IyYbLKLFQqT/exec",
+  "mode": "native_google_apps_script",
+  "updatedAt": "2026-10-29T13:30:38.913Z"
 }
