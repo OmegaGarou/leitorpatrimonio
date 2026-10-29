@@ -1,0 +1,7 @@
+@PRJ:leitorpatrimonio|STACK:HTML5+CSS3+VanillaJS+IndexedDB+SheetJS+Html5Qrcode+GAS|SW:patrimonio-pwa-v11
+#01|2026-10-28|U:pwa_coletor_patrimonio_offline_first|OK:idb_store_coletas+sw_cache_network_first+xlsx_export@index.html,style.css,app.js,sw.js
+#02|2026-10-28|U:menu_compacto_tela_celular_100vh|FAIL:[header_fixo_grande(ocupava_espaco_vertical_scanner)]|OK:floating_menu_btn_top_left+coletor_card_inline@index.html,style.css,app.js
+#03|2026-10-28|U:scanner_barcode_alta_compatibilidade_android_ios|FAIL:[BarcodeDetector_nativo_isolado(sem_suporte_alguns_browsers)]|OK:BarcodeDetector_nativo+fallback_html5_qrcode+torch_control@app.js,index.html
+#04|2026-10-28|U:bloqueio_duplicidade_e_sync_nuvem|OK:check_idb_unique_code+modal_duplicidade+sync_gas_api_endpoint@app.js,index.html
+#05|2026-10-29|U:diagnostico_queda_recorrente_tunel_planilha|FAIL:[serveo_rotacao_5min_502_bad_gateway+github_api_rate_limit_60_req_ip+queda_processo_pc_fechado]|OK:reativado_bridge_serveo_ativo+proposta_gas_definitivo_ou_ngrok_estavel@endpoint.json,app.js
+

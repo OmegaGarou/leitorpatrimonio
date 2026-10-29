@@ -11,7 +11,7 @@ const DB_VERSION = 2;
 const STORE_NAME = 'coletas';
 
 // Se desejar deixar a URL da Planilha Google fixa no código para todos os celulares, cole-a abaixo:
-const DEFAULT_GOOGLE_SCRIPT_URL = '/api';
+const DEFAULT_GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby5eBg4SFxCuKGeusvqaF2NP_Ev1-STaPHht4U4I47YOyNblUDoPBUH5IyYbLKLFQqT/exec';
 
 const ANDARES_LIST = [
   'Subsolo',
@@ -177,11 +177,14 @@ function getCloudUrl() {
   } else if (saved) {
     return saved;
   }
+  if (DEFAULT_GOOGLE_SCRIPT_URL && isUrlEndpointDiretoValido(DEFAULT_GOOGLE_SCRIPT_URL)) {
+    return DEFAULT_GOOGLE_SCRIPT_URL;
+  }
   if (cachedDynamicApiUrl) {
     return cachedDynamicApiUrl;
   }
   if (window.location.hostname.includes('github.io')) {
-    return '';
+    return DEFAULT_GOOGLE_SCRIPT_URL || '';
   }
   return DEFAULT_GOOGLE_SCRIPT_URL || '/api';
 }
@@ -232,9 +235,12 @@ async function lerEndpointViaGithubRaw() {
 }
 
 async function descobrirEndpointAtivo(forceRefresh = false) {
+  const fixed = getCloudUrl();
+  if (fixed && fixed.startsWith('https://script.google.com/')) {
+    return fixed;
+  }
   if (!forceRefresh) {
-    const current = getCloudUrl();
-    if (current) return current;
+    if (fixed) return fixed;
     const rawUrl = await lerEndpointViaGithubRaw();
     if (rawUrl) return rawUrl;
     const apiUrl = await lerEndpointViaGithubApi();
