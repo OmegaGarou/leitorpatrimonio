@@ -1,4 +1,4 @@
-@PRJ:leitorpatrimonio|STACK:HTML5+CSS3+VanillaJS+IndexedDB+SheetJS+Html5Qrcode+GAS|SW:patrimonio-pwa-v16
+@PRJ:leitorpatrimonio|STACK:HTML5+CSS3+VanillaJS+IndexedDB+SheetJS+Html5Qrcode+GAS|SW:patrimonio-pwa-v18
 #01|2026-10-28|U:pwa_coletor_patrimonio_offline_first|OK:idb_store_coletas+sw_cache_network_first+xlsx_export@index.html,style.css,app.js,sw.js
 #02|2026-10-28|U:menu_compacto_tela_celular_100vh|FAIL:[header_fixo_grande(ocupava_espaco_vertical_scanner)]|OK:floating_menu_btn_top_left+coletor_card_inline@index.html,style.css,app.js
 #03|2026-10-28|U:scanner_barcode_alta_compatibilidade_android_ios|FAIL:[BarcodeDetector_nativo_isolado(sem_suporte_alguns_browsers)]|OK:BarcodeDetector_nativo+fallback_html5_qrcode+torch_control@app.js,index.html
@@ -9,4 +9,7 @@
 #08|2026-10-30|U:leitura_automatica_continua_sem_clicar_botao|OK:auto_scan_loop_350ms+debounce_4s+flash_verde_mira+botao_opcional_forcar+sw_v14@app.js,index.html,sw.js
 #09|2026-10-30|U:botao_toggle_auto_registro_on_off|OK:btn_auto_scan_cinza_verde+localStorage_auto_scan+instrucoes_dinamicas+sw_v15@index.html,style.css,app.js,sw.js
 #10|2026-10-30|U:preservar_coleta_duplicada_com_tag_coluna_h|OK:gas_append_ja_coletado_coluna_H+modal_duplicidade_mantido_para_operador+sw_v16@app.js,sw.js
+#11|2026-10-30|U:bloqueio_menu_somente_consulta_sem_excluir_nem_exportar|FAIL:[botoes_exportar_excel_e_excluir_item_no_app(risco_perda_dados)]|OK:menu_somente_consultar_coletas+removido_lixeira_e_exportar+sw_v17@index.html,app.js,sw.js
+#12|2026-10-30|U:corrigir_auto_registro_e_botao_manual_ios_safari|FAIL:[scanFile_blob_leaks+BarcodeDetector_indisponivel_ios+audio_context_bloqueado+delay_click_teclado_virtual]|OK:decodificacao_zxing_direta_canvas_sincrona+canvas_persistente+fast_click_touch+fallback_idb_memoria+font_16px_anti_zoom+sw_v18@app.js,index.html,style.css,sw.js
+
 

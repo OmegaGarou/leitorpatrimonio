@@ -318,11 +318,12 @@ html, body {
   padding: 7px 10px;
   color: var(--text-primary);
   font-family: var(--font-family);
-  font-size: 0.88rem;
+  font-size: 16px; /* 16px mínimo para evitar zoom automático no iOS Safari */
   font-weight: 500;
   outline: none;
   transition: all 0.2s ease;
   min-height: 36px;
+  touch-action: manipulation;
 }
 
 .custom-input-coletor:focus {
@@ -1229,10 +1230,11 @@ html, body {
   padding: 0 10px;
   color: var(--text-primary);
   font-family: var(--font-family);
-  font-size: 1rem;
+  font-size: 16px;
   font-weight: 700;
   letter-spacing: 0.5px;
   outline: none;
+  touch-action: manipulation;
 }
 
 .custom-input-manual:focus {
@@ -1253,8 +1255,33 @@ html, body {
   cursor: pointer;
   white-space: nowrap;
   transition: transform 0.15s ease;
+  touch-action: manipulation;
+  -webkit-appearance: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-.btn-salvar-manual:active {
+.btn-salvar-manual:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-salvar-manual:active:not(:disabled) {
   transform: scale(0.96);
+}
+
+/* Otimização de resposta tátil e clique para dispositivos móveis iOS/Android */
+button,
+.btn-registrar,
+.btn-auto-scan,
+.btn-salvar-manual,
+.btn-toggle-manual,
+.btn-close-manual,
+.btn-modal-ok,
+.floating-menu-btn,
+.nav-btn,
+.btn-sm {
+  touch-action: manipulation;
+  -webkit-appearance: none;
+  -webkit-tap-highlight-color: transparent;
 }

@@ -142,6 +142,9 @@ let isScanningLoopActive = false;
 let autoScanLoopTimer = null;
 let lastAutoRegisteredCode = '';
 let lastAutoRegisteredTime = 0;
+let persistentRecorteCanvas = null;
+let globalAudioCtx = null;
+let cacheMemoriaColetas = [];
 
 // ==========================================================================
 // 4. CLIENTE GOOGLE DRIVE (APPS SCRIPT WEB APP / AUTO-ENDPOINT)
@@ -432,122 +435,244 @@ const API = {
 };
 
 // ==========================================================================
-// 5. INICIALIZAÇÃO DO BANCO INDEXEDDB (OFFLINE / DISPOSITIVO LOCAL)
+// 5. BANCO LOCAL (INDEXEDDB COM FALLBACK EM MEMÓRIA / LOCALSTORAGE PARA IOS)
 // ==========================================================================
+function carregarCacheMemoria() {
+  try {
+    const salvo = localStorage.getItem('patrimonio_backup_cache');
+    if (salvo) {
+      const parsed = JSON.parse(salvo);
+      if (Array.isArray(parsed)) cacheMemoriaColetas = parsed;
+    }
+  } catch (e) {}
+}
+
+function salvarEmCacheMemoria(item) {
+  try {
+    const limpo = normalizarPatrimonio(item.patrimonio);
+    const idx = cacheMemoriaColetas.findIndex(i => normalizarPatrimonio(i.patrimonio) === limpo);
+    const registro = { ...item, patrimonio: limpo };
+    if (idx >= 0) {
+      cacheMemoriaColetas[idx] = registro;
+    } else {
+      cacheMemoriaColetas.unshift(registro);
+    }
+    localStorage.setItem('patrimonio_backup_cache', JSON.stringify(cacheMemoriaColetas.slice(0, 500)));
+  } catch (e) {}
+}
+
+function buscarEmCacheMemoria(codigo) {
+  const limpo = normalizarPatrimonio(codigo);
+  return cacheMemoriaColetas.find(i => normalizarPatrimonio(i.patrimonio) === limpo) || null;
+}
+
 function initDB() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
+  carregarCacheMemoria();
+  return new Promise((resolve) => {
+    if (!('indexedDB' in window)) {
+      console.warn('IndexedDB não suportado neste navegador. Utilizando cache em memória.');
+      resolve(null);
+      return;
+    }
 
-    request.onupgradeneeded = (event) => {
-      const db = event.target.result;
-      let store;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        store = db.createObjectStore(STORE_NAME, { keyPath: 'patrimonio' });
-      } else {
-        store = event.target.transaction.objectStore(STORE_NAME);
-      }
+    try {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-      if (!store.indexNames.contains('timestamp')) {
-        store.createIndex('timestamp', 'timestamp', { unique: false });
-      }
-      if (!store.indexNames.contains('andar')) {
-        store.createIndex('andar', 'andar', { unique: false });
-      }
-      if (!store.indexNames.contains('localizacao')) {
-        store.createIndex('localizacao', 'localizacao', { unique: false });
-      }
-    };
+      request.onupgradeneeded = (event) => {
+        try {
+          const db = event.target.result;
+          let store;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            store = db.createObjectStore(STORE_NAME, { keyPath: 'patrimonio' });
+          } else {
+            store = event.target.transaction.objectStore(STORE_NAME);
+          }
 
-    request.onsuccess = (event) => {
-      dbInstance = event.target.result;
-      resolve(dbInstance);
-    };
+          if (!store.indexNames.contains('timestamp')) {
+            store.createIndex('timestamp', 'timestamp', { unique: false });
+          }
+          if (!store.indexNames.contains('andar')) {
+            store.createIndex('andar', 'andar', { unique: false });
+          }
+          if (!store.indexNames.contains('localizacao')) {
+            store.createIndex('localizacao', 'localizacao', { unique: false });
+          }
+        } catch (upErr) {
+          console.warn('Aviso no onupgradeneeded:', upErr);
+        }
+      };
 
-    request.onerror = (event) => {
-      console.error('Erro ao abrir IndexedDB:', event.target.error);
-      reject(event.target.error);
-    };
+      request.onsuccess = (event) => {
+        dbInstance = event.target.result;
+        resolve(dbInstance);
+      };
+
+      request.onerror = (event) => {
+        console.warn('IndexedDB inacessível (ex: navegação anônima iOS). Usando fallback em memória:', event && event.target ? event.target.error : '');
+        resolve(null);
+      };
+
+      request.onblocked = () => {
+        console.warn('IndexedDB bloqueado. Usando fallback em memória.');
+        resolve(null);
+      };
+    } catch (err) {
+      console.warn('Erro ao abrir IndexedDB:', err);
+      resolve(null);
+    }
   });
 }
 
 const DB = {
   async salvar(item) {
-    return new Promise((resolve, reject) => {
-      const tx = dbInstance.transaction(STORE_NAME, 'readwrite');
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.put({ ...item, patrimonio: normalizarPatrimonio(item.patrimonio) });
-      req.onsuccess = () => resolve(true);
-      req.onerror = (e) => reject(e.target.error);
+    salvarEmCacheMemoria(item);
+    if (!dbInstance) return true;
+    return new Promise((resolve) => {
+      try {
+        const tx = dbInstance.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.put({ ...item, patrimonio: normalizarPatrimonio(item.patrimonio) });
+        req.onsuccess = () => resolve(true);
+        req.onerror = () => resolve(true);
+      } catch (e) {
+        resolve(true);
+      }
     });
   },
 
   async sincronizarEspelho(itensServidor, itensLocaisPendentes) {
+    if (Array.isArray(itensServidor)) {
+      cacheMemoriaColetas = itensServidor.map(item => ({
+        patrimonio: normalizarPatrimonio(item.patrimonio),
+        andar: item.andar || '',
+        localizacao: item.localizacao || '',
+        setor: item.setor || '',
+        operador: item.operador || '',
+        data: item.data || '',
+        timestamp: Number(item.timestamp) || Date.now(),
+        pendenteSync: false
+      }));
+      (itensLocaisPendentes || []).forEach(salvarEmCacheMemoria);
+      try {
+        localStorage.setItem('patrimonio_backup_cache', JSON.stringify(cacheMemoriaColetas.slice(0, 500)));
+      } catch (e) {}
+    }
+
+    if (!dbInstance) return true;
     return new Promise((resolve) => {
-      const tx = dbInstance.transaction(STORE_NAME, 'readwrite');
-      const store = tx.objectStore(STORE_NAME);
-      store.clear();
+      try {
+        const tx = dbInstance.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        store.clear();
 
-      (itensServidor || []).forEach(item => {
-        if (item && item.patrimonio) {
-          store.put({
-            patrimonio: normalizarPatrimonio(item.patrimonio),
-            andar: item.andar || '',
-            localizacao: item.localizacao || '',
-            setor: item.setor || '',
-            operador: item.operador || '',
-            data: item.data || '',
-            timestamp: Number(item.timestamp) || Date.now(),
-            pendenteSync: false
-          });
-        }
-      });
+        (itensServidor || []).forEach(item => {
+          if (item && item.patrimonio) {
+            store.put({
+              patrimonio: normalizarPatrimonio(item.patrimonio),
+              andar: item.andar || '',
+              localizacao: item.localizacao || '',
+              setor: item.setor || '',
+              operador: item.operador || '',
+              data: item.data || '',
+              timestamp: Number(item.timestamp) || Date.now(),
+              pendenteSync: false
+            });
+          }
+        });
 
-      (itensLocaisPendentes || []).forEach(item => {
-        store.put({ ...item, patrimonio: normalizarPatrimonio(item.patrimonio) });
-      });
+        (itensLocaisPendentes || []).forEach(item => {
+          store.put({ ...item, patrimonio: normalizarPatrimonio(item.patrimonio) });
+        });
 
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => resolve(false);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      } catch (e) {
+        resolve(false);
+      }
     });
   },
 
   async buscarPorPatrimonio(codigo) {
+    const limpo = normalizarPatrimonio(codigo);
+    if (!dbInstance) {
+      return buscarEmCacheMemoria(limpo);
+    }
     return new Promise((resolve) => {
-      const tx = dbInstance.transaction(STORE_NAME, 'readonly');
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.get(normalizarPatrimonio(codigo));
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => resolve(null);
+      try {
+        const tx = dbInstance.transaction(STORE_NAME, 'readonly');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.get(limpo);
+        req.onsuccess = () => resolve(req.result || buscarEmCacheMemoria(limpo));
+        req.onerror = () => resolve(buscarEmCacheMemoria(limpo));
+      } catch (e) {
+        resolve(buscarEmCacheMemoria(limpo));
+      }
     });
   },
 
   async listarTodos() {
+    if (!dbInstance) {
+      return [...cacheMemoriaColetas];
+    }
     return new Promise((resolve) => {
-      const tx = dbInstance.transaction(STORE_NAME, 'readonly');
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.getAll();
-      req.onsuccess = () => resolve(req.result || []);
-      req.onerror = () => resolve([]);
+      try {
+        const tx = dbInstance.transaction(STORE_NAME, 'readonly');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.getAll();
+        req.onsuccess = () => {
+          const res = req.result || [];
+          if (res.length > 0) {
+            resolve(res);
+          } else {
+            resolve([...cacheMemoriaColetas]);
+          }
+        };
+        req.onerror = () => resolve([...cacheMemoriaColetas]);
+      } catch (e) {
+        resolve([...cacheMemoriaColetas]);
+      }
     });
   },
 
   async excluir(codigo) {
+    const limpo = normalizarPatrimonio(codigo);
+    const idx = cacheMemoriaColetas.findIndex(i => normalizarPatrimonio(i.patrimonio) === limpo);
+    if (idx >= 0) {
+      cacheMemoriaColetas.splice(idx, 1);
+      try {
+        localStorage.setItem('patrimonio_backup_cache', JSON.stringify(cacheMemoriaColetas.slice(0, 500)));
+      } catch (e) {}
+    }
+    if (!dbInstance) return true;
     return new Promise((resolve) => {
-      const tx = dbInstance.transaction(STORE_NAME, 'readwrite');
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.delete(normalizarPatrimonio(codigo));
-      req.onsuccess = () => resolve(true);
-      req.onerror = () => resolve(false);
+      try {
+        const tx = dbInstance.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.delete(limpo);
+        req.onsuccess = () => resolve(true);
+        req.onerror = () => resolve(false);
+      } catch (e) {
+        resolve(false);
+      }
     });
   },
 
   async limparTudo() {
+    cacheMemoriaColetas = [];
+    try {
+      localStorage.removeItem('patrimonio_backup_cache');
+    } catch (e) {}
+    if (!dbInstance) return true;
     return new Promise((resolve) => {
-      const tx = dbInstance.transaction(STORE_NAME, 'readwrite');
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.clear();
-      req.onsuccess = () => resolve(true);
-      req.onerror = () => resolve(false);
+      try {
+        const tx = dbInstance.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.clear();
+        req.onsuccess = () => resolve(true);
+        req.onerror = () => resolve(false);
+      } catch (e) {
+        resolve(false);
+      }
     });
   }
 };
@@ -619,44 +744,61 @@ async function sincronizarComServidor(forceRefresh = false) {
 }
 
 // ==========================================================================
-// 7. GERENCIAMENTO DE ÁUDIO & FEEDBACK TÁTIL
+// 7. GERENCIAMENTO DE ÁUDIO & FEEDBACK TÁTIL (COMPATÍVEL COM POLÍTICAS DO SAFARI / IOS)
 // ==========================================================================
+function getSharedAudioContext() {
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+    if (!globalAudioCtx) {
+      globalAudioCtx = new AudioContextClass();
+    }
+    if (globalAudioCtx.state === 'suspended') {
+      globalAudioCtx.resume().catch(() => {});
+    }
+    return globalAudioCtx;
+  } catch (e) {
+    return null;
+  }
+}
+
 function playBeep(type = 'success') {
   try {
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContext) return;
-    const ctx = new AudioContext();
+    const ctx = getSharedAudioContext();
+    if (ctx && ctx.state !== 'closed') {
+      if (type === 'success') {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(1850, ctx.currentTime);
+        gain.gain.setValueAtTime(0.2, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
 
-    if (type === 'success') {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(1850, ctx.currentTime);
-      gain.gain.setValueAtTime(0.2, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.12);
+      } else {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(320, ctx.currentTime);
+        gain.gain.setValueAtTime(0.25, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25);
 
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.12);
-    } else {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(320, ctx.currentTime);
-      gain.gain.setValueAtTime(0.25, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25);
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.25);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.25);
+      }
     }
   } catch (e) {}
 
-  if ('vibrate' in navigator) {
-    navigator.vibrate(type === 'success' ? 70 : [100, 50, 100]);
-  }
+  try {
+    if ('vibrate' in navigator && typeof navigator.vibrate === 'function') {
+      navigator.vibrate(type === 'success' ? 70 : [100, 50, 100]);
+    }
+  } catch (e) {}
 }
 
 let toastTimeout = null;
@@ -683,7 +825,7 @@ function getDataAtualFormatada() {
 }
 
 // ==========================================================================
-// 9. GERENCIAMENTO DA CÂMERA & VISOR
+// 9. GERENCIAMENTO DA CÂMERA & VISOR (OTIMIZADO PARA IOS SAFARI & ANDROID)
 // ==========================================================================
 async function iniciarCamera() {
   DOM.cameraStatus.style.display = 'none';
@@ -698,7 +840,7 @@ async function iniciarCamera() {
   }
 
   try {
-    const constraints = {
+    let constraints = {
       video: {
         facingMode: { ideal: 'environment' },
         width: { ideal: 1920 },
@@ -707,14 +849,35 @@ async function iniciarCamera() {
       audio: false
     };
 
-    cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (overErr) {
+      // Fallback para modelos de iPhone/iPad que rejeitam restrições rígidas de resolução
+      constraints = {
+        video: { facingMode: 'environment' },
+        audio: false
+      };
+      cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
+    }
+
     DOM.cameraVideo.srcObject = cameraStream;
+    DOM.cameraVideo.setAttribute('playsinline', 'true');
+    DOM.cameraVideo.setAttribute('webkit-playsinline', 'true');
+
+    try {
+      await DOM.cameraVideo.play();
+    } catch (ePlay) {}
 
     DOM.cameraVideo.onloadedmetadata = () => {
-      DOM.cameraVideo.play();
+      try { DOM.cameraVideo.play(); } catch (e) {}
       checarSuporteLanterna();
       iniciarLoopLeituraAutomatica();
     };
+
+    if (DOM.cameraVideo.videoWidth > 0) {
+      checarSuporteLanterna();
+      iniciarLoopLeituraAutomatica();
+    }
 
   } catch (err) {
     console.error('Erro ao iniciar câmera:', err);
@@ -758,18 +921,38 @@ async function alternarLanterna() {
 }
 
 // ==========================================================================
-// 10. MOTOR DE DECODIFICAÇÃO DE CÓDIGOS DE BARRAS & LEITURA CONTÍNUA AUTOMÁTICA
+// 10. MOTOR DE DECODIFICAÇÃO DE CÓDIGOS DE BARRAS (BARCODEDETECTOR + ZXING DIRETO)
 // ==========================================================================
 async function initBarcodeDetector() {
   if ('BarcodeDetector' in window) {
     try {
       const supportedFormats = await BarcodeDetector.getSupportedFormats();
-      barcodeDetectorInstance = new BarcodeDetector({
-        formats: supportedFormats.length > 0 ? supportedFormats : ['code_128', 'code_39', 'ean_13', 'ean_8', 'itf', 'codabar', 'qr_code']
-      });
+      if (supportedFormats && supportedFormats.length > 0) {
+        barcodeDetectorInstance = new BarcodeDetector({
+          formats: supportedFormats
+        });
+      }
     } catch (e) {
       barcodeDetectorInstance = null;
     }
+  }
+}
+
+function initHtml5QrCodeScanner() {
+  if (!window.Html5Qrcode) return;
+  try {
+    let tempDiv = document.getElementById('tempQrReader');
+    if (!tempDiv) {
+      tempDiv = document.createElement('div');
+      tempDiv.id = 'tempQrReader';
+      tempDiv.style.display = 'none';
+      document.body.appendChild(tempDiv);
+    }
+    if (!html5QrCodeScanner) {
+      html5QrCodeScanner = new Html5Qrcode('tempQrReader', { verbose: false });
+    }
+  } catch (e) {
+    console.warn('Falha ao inicializar motor ZXing:', e);
   }
 }
 
@@ -807,7 +990,6 @@ function alternarModoAutoScan() {
 
 function inicializarModoAutoScan() {
   const salvo = localStorage.getItem(STORAGE_KEYS.AUTO_SCAN);
-  // Padrão: OFF (falso), a menos que o operador tenha ativado explicitamente
   isAutoScanEnabled = salvo === 'true';
   atualizarUiAutoScan();
 }
@@ -835,7 +1017,7 @@ async function executarCicloAutoScan() {
 
   const podeLer =
     DOM.viewScanner && DOM.viewScanner.style.display !== 'none' &&
-    DOM.cameraVideo && DOM.cameraVideo.readyState >= 2 &&
+    DOM.cameraVideo && (DOM.cameraVideo.readyState >= 2 || DOM.cameraVideo.videoWidth > 0) &&
     !isProcessingRegistration &&
     (!DOM.manualInputCard || DOM.manualInputCard.style.display === 'none') &&
     (!DOM.modalDuplicidade || DOM.modalDuplicidade.style.display === 'none') &&
@@ -877,7 +1059,7 @@ async function executarCicloAutoScan() {
         }
       }
     } catch (e) {
-      // Ignora pequenos erros de frame durante o ciclo contínuo
+      // Ignora pequenas oscilações de frame durante o ciclo contínuo
     }
   }
 
@@ -895,93 +1077,104 @@ function gerarCanvasRecorteMira(sourceCanvas) {
   const cropX = Math.floor((sw - cropW) / 2);
   const cropY = Math.floor((sh - cropH) / 2);
 
-  const outCanvas = document.createElement('canvas');
   const targetW = Math.min(960, cropW);
   const scale = targetW / cropW;
   const targetH = Math.floor(cropH * scale);
-  outCanvas.width = targetW;
-  outCanvas.height = targetH;
 
-  const octx = outCanvas.getContext('2d', { willReadFrequently: true });
+  if (!persistentRecorteCanvas) {
+    persistentRecorteCanvas = document.createElement('canvas');
+  }
+  persistentRecorteCanvas.width = targetW;
+  persistentRecorteCanvas.height = targetH;
+
+  const octx = persistentRecorteCanvas.getContext('2d', { willReadFrequently: true });
   octx.drawImage(sourceCanvas, cropX, cropY, cropW, cropH, 0, 0, targetW, targetH);
-  return outCanvas;
+  return persistentRecorteCanvas;
 }
 
-async function tentarHtml5QrcodeEmCanvas(targetCanvas) {
-  if (!window.Html5Qrcode) return null;
+// Decodificação direta nos pixels do Canvas via motor ZXing nativo (sem alocação de Blob ou File)
+function decodificarCanvasSincrono(targetCanvas) {
+  if (!html5QrCodeScanner || !targetCanvas) return null;
   try {
-    if (!html5QrCodeScanner) {
-      let tempDiv = document.getElementById('tempQrReader');
-      if (!tempDiv) {
-        tempDiv = document.createElement('div');
-        tempDiv.id = 'tempQrReader';
-        tempDiv.style.display = 'none';
-        document.body.appendChild(tempDiv);
-      }
-      html5QrCodeScanner = new Html5Qrcode('tempQrReader');
+    if (html5QrCodeScanner.qrcode && html5QrCodeScanner.qrcode.primaryDecoder) {
+      const res = html5QrCodeScanner.qrcode.primaryDecoder.decode(targetCanvas);
+      if (res && res.text) return String(res.text).trim();
     }
-    const blob = await new Promise(res => targetCanvas.toBlob(res, 'image/jpeg', 0.92));
-    const file = new File([blob], 'frame.jpg', { type: 'image/jpeg' });
-    const decodedResult = await html5QrCodeScanner.scanFile(file, false);
-    return decodedResult || null;
   } catch (e) {
-    return null;
+    // Exceção normal quando o quadro não possui código de barras legível
   }
+  return null;
+}
+
+async function decodificarCanvasAssincrono(targetCanvas) {
+  if (!html5QrCodeScanner || !targetCanvas) return null;
+  try {
+    if (html5QrCodeScanner.qrcode && typeof html5QrCodeScanner.qrcode.decodeAsync === 'function') {
+      const res = await html5QrCodeScanner.qrcode.decodeAsync(targetCanvas);
+      if (res && res.text) return String(res.text).trim();
+    }
+  } catch (e) {}
+  return null;
 }
 
 async function capturarEDecodificarFrame(onProgress) {
-  if (!DOM.cameraVideo.videoWidth || !DOM.cameraVideo.videoHeight) {
+  if (!DOM.cameraVideo) {
+    throw new Error('Câmera indisponível.');
+  }
+
+  const vWidth = DOM.cameraVideo.videoWidth;
+  const vHeight = DOM.cameraVideo.videoHeight;
+  if (!vWidth || !vHeight) {
     throw new Error('Aguardando câmera inicializar...');
   }
 
   const canvas = DOM.photoCanvas;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  canvas.width = vWidth;
+  canvas.height = vHeight;
+  ctx.drawImage(DOM.cameraVideo, 0, 0, vWidth, vHeight);
 
-  const width = DOM.cameraVideo.videoWidth;
-  const height = DOM.cameraVideo.videoHeight;
-  canvas.width = width;
-  canvas.height = height;
-
-  ctx.drawImage(DOM.cameraVideo, 0, 0, width, height);
   const recorteMira = gerarCanvasRecorteMira(canvas);
-
   let rawDetectado = null;
 
-  // 1ª Tentativa: BarcodeDetector Nativo (Quadro Completo + Recorte da Mira)
+  // 1ª Tentativa: BarcodeDetector Nativo (se suportado pelo navegador e sistema operacional)
   if (barcodeDetectorInstance) {
     try {
-      const barcodesFull = await barcodeDetectorInstance.detect(canvas);
-      if (barcodesFull && barcodesFull.length > 0 && barcodesFull[0].rawValue) {
-        rawDetectado = barcodesFull[0].rawValue;
+      const barcodesCrop = await barcodeDetectorInstance.detect(recorteMira);
+      if (barcodesCrop && barcodesCrop.length > 0 && barcodesCrop[0].rawValue) {
+        rawDetectado = barcodesCrop[0].rawValue;
       } else {
-        const barcodesCrop = await barcodeDetectorInstance.detect(recorteMira);
-        if (barcodesCrop && barcodesCrop.length > 0 && barcodesCrop[0].rawValue) {
-          rawDetectado = barcodesCrop[0].rawValue;
+        const barcodesFull = await barcodeDetectorInstance.detect(canvas);
+        if (barcodesFull && barcodesFull.length > 0 && barcodesFull[0].rawValue) {
+          rawDetectado = barcodesFull[0].rawValue;
         }
       }
     } catch (e) {}
   }
 
-  // 2ª Tentativa: Html5Qrcode Fallback (Recorte da Mira + Quadro Completo)
-  if (!rawDetectado) {
-    const qrCrop = await tentarHtml5QrcodeEmCanvas(recorteMira);
-    if (qrCrop) {
-      rawDetectado = qrCrop;
-    } else {
-      const qrFull = await tentarHtml5QrcodeEmCanvas(canvas);
-      if (qrFull) {
-        rawDetectado = qrFull;
-      }
+  // 2ª Tentativa: Decodificação ZXing nativa direta nos pixels do canvas (essencial para iOS Safari)
+  if (!rawDetectado && html5QrCodeScanner) {
+    // Primeiro tenta no recorte da mira (mais rápido e sem ruído de fundo)
+    rawDetectado = decodificarCanvasSincrono(recorteMira);
+
+    // Se não encontrou, tenta no quadro completo
+    if (!rawDetectado) {
+      rawDetectado = decodificarCanvasSincrono(canvas);
+    }
+
+    // Se ainda não encontrou, tenta assíncrono caso haja secundary decoder
+    if (!rawDetectado) {
+      rawDetectado = await decodificarCanvasAssincrono(recorteMira);
     }
   }
 
   if (!rawDetectado) {
-    return { code: null, raw: null, metodo: null };
+    return { code: null, raw: null, metodo: null, valido: false };
   }
 
   const limpo = normalizarPatrimonio(rawDetectado).replace(/\D/g, '');
 
-  // Validação rigorosa: deve ter 12 dígitos E iniciar com 10000
+  // Validação estrita: 12 dígitos iniciando com 10000
   if (ehPatrimonioPadrao12Digitos(limpo)) {
     return { code: limpo, raw: rawDetectado, metodo: 'barcode', valido: true };
   }
@@ -1086,6 +1279,15 @@ async function processarRegistroCodigo(rawCode, metodo = 'barcode') {
     const itemDup = (apiResult.data && apiResult.data.item) ? apiResult.data.item : novoRegistro;
     playBeep('error');
     exibirModalDuplicidade(itemDup);
+
+    // Registra mesmo assim na Planilha do Google Drive com a tag "já coletado" na Coluna H
+    const registroDuplicado = {
+      ...novoRegistro,
+      observacao: 'já coletado',
+      forceDuplicate: true,
+      pendenteSync: false
+    };
+    API.registrar(registroDuplicado).catch(() => {});
     return false;
   }
 
@@ -1190,7 +1392,27 @@ async function handleSalvarManual() {
     DOM.inputManualPatrimonio.focus();
     return;
   }
-  await processarRegistroCodigo(valorDigitado, 'manual');
+
+  // Fecha o teclado virtual no iOS Safari para desobstruir a visão
+  DOM.inputManualPatrimonio.blur();
+
+  if (DOM.btnSalvarManual) {
+    DOM.btnSalvarManual.disabled = true;
+    DOM.btnSalvarManual.textContent = 'SALVANDO...';
+  }
+
+  try {
+    await processarRegistroCodigo(valorDigitado, 'manual');
+  } catch (err) {
+    console.error('Erro ao salvar registro manual:', err);
+    playBeep('error');
+    showToast('Erro ao salvar: ' + (err.message || 'Tente novamente'), 'error');
+  } finally {
+    if (DOM.btnSalvarManual) {
+      DOM.btnSalvarManual.disabled = false;
+      DOM.btnSalvarManual.textContent = 'SALVAR';
+    }
+  }
 }
 
 // ==========================================================================
@@ -1538,58 +1760,84 @@ function registrarServiceWorker() {
 }
 
 // ==========================================================================
-// 18. VINCULAÇÃO DE EVENTOS & BOOTSTRAP
+// 18. VINCULAÇÃO DE EVENTOS & BOOTSTRAP (SUPORTE RÁPIDO AO TOQUE IOS / ANDROID)
 // ==========================================================================
+function bindFastClick(element, handler) {
+  if (!element) return;
+  let touchHandled = false;
+
+  element.addEventListener('touchend', (e) => {
+    touchHandled = true;
+    e.preventDefault();
+    handler(e);
+    setTimeout(() => { touchHandled = false; }, 350);
+  }, { passive: false });
+
+  element.addEventListener('click', (e) => {
+    if (touchHandled) return;
+    handler(e);
+  });
+}
+
 function bindEventos() {
+  // Desbloqueia AudioContext na primeira interação do usuário (exigência do iOS Safari)
+  const unlockAudio = () => {
+    getSharedAudioContext();
+    window.removeEventListener('touchstart', unlockAudio);
+    window.removeEventListener('click', unlockAudio);
+  };
+  window.addEventListener('touchstart', unlockAudio, { passive: true });
+  window.addEventListener('click', unlockAudio, { passive: true });
+
   if (DOM.btnMenuToggle) {
-    DOM.btnMenuToggle.addEventListener('click', alternarMenu);
+    bindFastClick(DOM.btnMenuToggle, alternarMenu);
   }
   if (DOM.menuBackdrop) {
-    DOM.menuBackdrop.addEventListener('click', fecharMenu);
+    bindFastClick(DOM.menuBackdrop, fecharMenu);
   }
 
-  DOM.btnNavColetas.addEventListener('click', () => alternarTela('coletas'));
-  DOM.btnVoltarScanner.addEventListener('click', () => alternarTela('scanner'));
-
-  if (DOM.btnNavExportar) {
-    DOM.btnNavExportar.addEventListener('click', () => {
-      fecharMenu();
-      exportarParaExcel();
-    });
+  if (DOM.btnNavColetas) {
+    bindFastClick(DOM.btnNavColetas, () => alternarTela('coletas'));
+  }
+  if (DOM.btnVoltarScanner) {
+    bindFastClick(DOM.btnVoltarScanner, () => alternarTela('scanner'));
   }
 
   if (DOM.btnConfigCloud) {
-    DOM.btnConfigCloud.addEventListener('click', () => {
+    bindFastClick(DOM.btnConfigCloud, () => {
       fecharMenu();
       abrirModalCloud();
     });
   }
   if (DOM.statusCount) {
-    DOM.statusCount.addEventListener('click', () => {
+    bindFastClick(DOM.statusCount, () => {
       fecharMenu();
       abrirModalCloud();
     });
   }
-  if (DOM.btnCloseCloudModal) DOM.btnCloseCloudModal.addEventListener('click', fecharModalCloud);
-  if (DOM.btnSaveCloudUrl) DOM.btnSaveCloudUrl.addEventListener('click', salvarCloudUrl);
-  if (DOM.btnCopyShareLink) DOM.btnCopyShareLink.addEventListener('click', copiarLinkEquipe);
+  if (DOM.btnCloseCloudModal) bindFastClick(DOM.btnCloseCloudModal, fecharModalCloud);
+  if (DOM.btnSaveCloudUrl) bindFastClick(DOM.btnSaveCloudUrl, salvarCloudUrl);
+  if (DOM.btnCopyShareLink) bindFastClick(DOM.btnCopyShareLink, copiarLinkEquipe);
   if (DOM.modalCloudConfig) {
     DOM.modalCloudConfig.addEventListener('click', (e) => {
       if (e.target === DOM.modalCloudConfig) fecharModalCloud();
     });
   }
 
-  DOM.btnTorch.addEventListener('click', alternarLanterna);
-  DOM.btnRetryCamera.addEventListener('click', iniciarCamera);
+  if (DOM.btnTorch) bindFastClick(DOM.btnTorch, alternarLanterna);
+  if (DOM.btnRetryCamera) bindFastClick(DOM.btnRetryCamera, iniciarCamera);
 
-  DOM.btnRegistrar.addEventListener('click', handleRegistrar);
+  // Botões principais de registro com resposta instantânea ao toque (sem atraso de 300ms)
+  if (DOM.btnRegistrar) {
+    bindFastClick(DOM.btnRegistrar, handleRegistrar);
+  }
 
   if (DOM.btnToggleAutoScan) {
-    DOM.btnToggleAutoScan.addEventListener('click', alternarModoAutoScan);
+    bindFastClick(DOM.btnToggleAutoScan, alternarModoAutoScan);
   }
 
   if (DOM.btnToggleManual) {
-    DOM.btnToggleManual.addEventListener('click', () => {
+    bindFastClick(DOM.btnToggleManual, () => {
       if (DOM.manualInputCard && DOM.manualInputCard.style.display === 'flex') {
         fecharCampoManual();
       } else {
@@ -1597,45 +1845,36 @@ function bindEventos() {
       }
     });
   }
+
   if (DOM.btnCloseManual) {
-    DOM.btnCloseManual.addEventListener('click', fecharCampoManual);
+    bindFastClick(DOM.btnCloseManual, fecharCampoManual);
   }
+
   if (DOM.btnSalvarManual) {
-    DOM.btnSalvarManual.addEventListener('click', handleSalvarManual);
+    bindFastClick(DOM.btnSalvarManual, handleSalvarManual);
   }
+
   if (DOM.inputManualPatrimonio) {
     DOM.inputManualPatrimonio.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' || e.keyCode === 13) {
         e.preventDefault();
         handleSalvarManual();
       }
     });
   }
 
-  DOM.btnModalOk.addEventListener('click', fecharModalDuplicidade);
-  DOM.modalDuplicidade.addEventListener('click', (e) => {
-    if (e.target === DOM.modalDuplicidade) fecharModalDuplicidade();
-  });
+  if (DOM.btnModalOk) {
+    bindFastClick(DOM.btnModalOk, fecharModalDuplicidade);
+  }
+  if (DOM.modalDuplicidade) {
+    DOM.modalDuplicidade.addEventListener('click', (e) => {
+      if (e.target === DOM.modalDuplicidade) fecharModalDuplicidade();
+    });
+  }
 
   DOM.inputBusca.addEventListener('input', renderizarColetas);
   DOM.filterAndar.addEventListener('change', renderizarColetas);
   DOM.filterLocal.addEventListener('change', renderizarColetas);
-
-  if (DOM.btnLimparTudo) {
-    DOM.btnLimparTudo.addEventListener('click', async () => {
-      const total = (await DB.listarTodos()).length;
-      if (total === 0) return;
-
-      if (confirm(`ATENÇÃO: Deseja apagar todas as ${total} coletas na Planilha do Google Drive e neste celular?`)) {
-        await DB.limparTudo();
-        await API.limpar();
-        showToast('Base de coletas limpa globalmente.', 'info');
-        renderizarColetas();
-        sincronizarComServidor();
-        DOM.lastScannedFeedback.style.display = 'none';
-      }
-    });
-  }
 
   // Atualização periódica da nuvem a cada 12 segundos
   setInterval(sincronizarComServidor, 12000);
@@ -1655,6 +1894,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   await initBarcodeDetector();
+  initHtml5QrCodeScanner();
   iniciarCamera();
   registrarServiceWorker();
 });

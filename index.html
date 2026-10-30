@@ -84,7 +84,7 @@
       <!-- Visor da Câmera (Flexível para se adaptar à altura da tela) -->
       <div class="camera-card">
         <div class="camera-visor-wrapper">
-          <video id="cameraVideo" autoplay playsinline muted></video>
+          <video id="cameraVideo" autoplay playsinline webkit-playsinline muted></video>
           
           <!-- Mira / Guias do Leitor -->
           <div class="scanner-reticle">
@@ -341,6 +341,9 @@
 
   <!-- Canvas Invisível para Captura da Foto do Frame de Vídeo -->
   <canvas id="photoCanvas" style="display: none;"></canvas>
+
+  <!-- Container Invisível para Motor ZXing / Html5Qrcode -->
+  <div id="tempQrReader" style="display: none;" aria-hidden="true"></div>
 
   <!-- Bibliotecas Locais -->
   <script src="./js/xlsx.full.min.js"></script>
