@@ -112,7 +112,7 @@
             <div class="corner corner-bl"></div>
             <div class="corner corner-br"></div>
             <div class="scan-laser"></div>
-            <div class="scan-instructions">⚡ Leitura contínua ativa • Aponte para o código</div>
+            <div id="scanInstructions" class="scan-instructions">Aponte para o código e clique em REGISTRAR</div>
           </div>
 
           <!-- Botão de Lanterna (Flash) -->
@@ -177,14 +177,21 @@
           </div>
         </div>
 
-        <!-- Botão Principal: Registrar (Opcional / Forçar Leitura) -->
-        <button id="btnRegistrar" class="btn-registrar" type="button" title="A câmera lê automaticamente. Use este botão se desejar forçar a leitura imediata.">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="btn-icon">
-            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
-            <circle cx="12" cy="13" r="4"/>
-          </svg>
-          <span>FORÇAR LEITURA / FOTO</span>
-        </button>
+        <!-- Linha de Ações: Registrar Manualmente / Auto Registro ON/OFF -->
+        <div class="action-buttons-row">
+          <button id="btnRegistrar" class="btn-registrar" type="button" title="Clique para ler o código de barras ou tirar foto imediata">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="btn-icon">
+              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+              <circle cx="12" cy="13" r="4"/>
+            </svg>
+            <span>REGISTRAR</span>
+          </button>
+
+          <button id="btnToggleAutoScan" class="btn-auto-scan" type="button" title="Alternar leitura automática contínua pela câmera">
+            <span class="auto-scan-indicator"></span>
+            <span id="lblAutoScanText">Auto Registro OFF</span>
+          </button>
+        </div>
 
         <!-- Botão discreto para abrir digitação manual a qualquer momento -->
         <button id="btnToggleManual" class="btn-toggle-manual" type="button">

@@ -1,4 +1,4 @@
-@PRJ:leitorpatrimonio|STACK:HTML5+CSS3+VanillaJS+IndexedDB+SheetJS+Html5Qrcode+GAS|SW:patrimonio-pwa-v13
+@PRJ:leitorpatrimonio|STACK:HTML5+CSS3+VanillaJS+IndexedDB+SheetJS+Html5Qrcode+GAS|SW:patrimonio-pwa-v14
 #01|2026-10-28|U:pwa_coletor_patrimonio_offline_first|OK:idb_store_coletas+sw_cache_network_first+xlsx_export@index.html,style.css,app.js,sw.js
 #02|2026-10-28|U:menu_compacto_tela_celular_100vh|FAIL:[header_fixo_grande(ocupava_espaco_vertical_scanner)]|OK:floating_menu_btn_top_left+coletor_card_inline@index.html,style.css,app.js
 #03|2026-10-28|U:scanner_barcode_alta_compatibilidade_android_ios|FAIL:[BarcodeDetector_nativo_isolado(sem_suporte_alguns_browsers)]|OK:BarcodeDetector_nativo+fallback_html5_qrcode+torch_control@app.js,index.html
@@ -6,4 +6,5 @@
 #05|2026-10-29|U:diagnostico_queda_recorrente_tunel_planilha|FAIL:[serveo_rotacao_5min_502_bad_gateway+github_api_rate_limit_60_req_ip+queda_processo_pc_fechado]|OK:reativado_bridge_serveo_ativo+proposta_gas_definitivo_ou_ngrok_estavel@endpoint.json,app.js
 #06|2026-10-29|U:migracao_definitiva_gas_web_app|FAIL:[tunel_local_serveo(instavel_queda_pc)]|OK:endpoint_gas_fixado_nativo_sem_tunel+sw_v12@app.js,sw.js,endpoint.json
 #07|2026-10-30|U:remover_ocr_e_validar_prefixo_10000|FAIL:[ocr_tesseract_leitura_numeros(alucinava_digitos_e_dava_falso_duplicado)]|OK:removido_ocr_tesseract+barcode_detector_estrito_prefixo_10000+fallback_manual_obrigatorio+sw_v13@app.js,index.html,sw.js
+#08|2026-10-30|U:leitura_automatica_continua_sem_clicar_botao|OK:auto_scan_loop_350ms+debounce_4s+flash_verde_mira+botao_opcional_forcar+sw_v14@app.js,index.html,sw.js
 

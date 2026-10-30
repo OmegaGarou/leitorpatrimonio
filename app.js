@@ -45,7 +45,8 @@ const STORAGE_KEYS = {
   LOCAL: 'patrimonio_fixo_local',
   SETOR: 'patrimonio_fixo_setor',
   OPERADOR: 'patrimonio_fixo_operador',
-  CLOUD_URL: 'patrimonio_google_script_url'
+  CLOUD_URL: 'patrimonio_google_script_url',
+  AUTO_SCAN: 'patrimonio_auto_scan_enabled'
 };
 
 // ==========================================================================
@@ -79,6 +80,9 @@ const DOM = {
   selectLocalizacao: document.getElementById('selectLocalizacao'),
   inputSetor: document.getElementById('inputSetor'),
   btnRegistrar: document.getElementById('btnRegistrar'),
+  btnToggleAutoScan: document.getElementById('btnToggleAutoScan'),
+  lblAutoScanText: document.getElementById('lblAutoScanText'),
+  scanInstructions: document.getElementById('scanInstructions'),
   btnToggleManual: document.getElementById('btnToggleManual'),
   manualInputCard: document.getElementById('manualInputCard'),
   manualInputTitle: document.getElementById('manualInputTitle'),
@@ -133,6 +137,7 @@ let isOnlineWithServer = false;
 let isSyncing = false;
 let activeSyncPromise = null;
 let isProcessingRegistration = false;
+let isAutoScanEnabled = false;
 let isScanningLoopActive = false;
 let autoScanLoopTimer = null;
 let lastAutoRegisteredCode = '';
@@ -768,7 +773,47 @@ async function initBarcodeDetector() {
   }
 }
 
+function atualizarUiAutoScan() {
+  if (!DOM.btnToggleAutoScan || !DOM.lblAutoScanText) return;
+
+  if (isAutoScanEnabled) {
+    DOM.btnToggleAutoScan.classList.add('active');
+    DOM.lblAutoScanText.textContent = 'Auto Registro ON';
+    if (DOM.scanInstructions) {
+      DOM.scanInstructions.textContent = '⚡ Auto Registro ON • Aponte para o código';
+    }
+  } else {
+    DOM.btnToggleAutoScan.classList.remove('active');
+    DOM.lblAutoScanText.textContent = 'Auto Registro OFF';
+    if (DOM.scanInstructions) {
+      DOM.scanInstructions.textContent = 'Aponte para o código e clique em REGISTRAR';
+    }
+  }
+}
+
+function alternarModoAutoScan() {
+  isAutoScanEnabled = !isAutoScanEnabled;
+  localStorage.setItem(STORAGE_KEYS.AUTO_SCAN, isAutoScanEnabled ? 'true' : 'false');
+  atualizarUiAutoScan();
+
+  if (isAutoScanEnabled) {
+    showToast('Auto Registro LIGADO (ON): a câmera registra assim que detectar.', 'success');
+    iniciarLoopLeituraAutomatica();
+  } else {
+    showToast('Auto Registro DESLIGADO (OFF): use o botão REGISTRAR para gravar.', 'info');
+    pararLoopLeituraAutomatica();
+  }
+}
+
+function inicializarModoAutoScan() {
+  const salvo = localStorage.getItem(STORAGE_KEYS.AUTO_SCAN);
+  // Padrão: OFF (falso), a menos que o operador tenha ativado explicitamente
+  isAutoScanEnabled = salvo === 'true';
+  atualizarUiAutoScan();
+}
+
 function iniciarLoopLeituraAutomatica() {
+  if (!isAutoScanEnabled) return;
   if (isScanningLoopActive) return;
   isScanningLoopActive = true;
   executarCicloAutoScan();
@@ -783,7 +828,10 @@ function pararLoopLeituraAutomatica() {
 }
 
 async function executarCicloAutoScan() {
-  if (!isScanningLoopActive) return;
+  if (!isAutoScanEnabled || !isScanningLoopActive) {
+    isScanningLoopActive = false;
+    return;
+  }
 
   const podeLer =
     DOM.viewScanner && DOM.viewScanner.style.display !== 'none' &&
@@ -834,7 +882,7 @@ async function executarCicloAutoScan() {
   }
 
   // Intervalo de 350ms entre análises de quadros (baixo consumo de CPU e excelente resposta)
-  if (isScanningLoopActive) {
+  if (isScanningLoopActive && isAutoScanEnabled) {
     autoScanLoopTimer = setTimeout(executarCicloAutoScan, 350);
   }
 }
@@ -1534,6 +1582,10 @@ function bindEventos() {
 
   DOM.btnRegistrar.addEventListener('click', handleRegistrar);
 
+  if (DOM.btnToggleAutoScan) {
+    DOM.btnToggleAutoScan.addEventListener('click', alternarModoAutoScan);
+  }
+
   if (DOM.btnToggleManual) {
     DOM.btnToggleManual.addEventListener('click', () => {
       if (DOM.manualInputCard && DOM.manualInputCard.style.display === 'flex') {
@@ -1588,6 +1640,7 @@ function bindEventos() {
 document.addEventListener('DOMContentLoaded', async () => {
   verificarParametroUrlApi();
   inicializarCamposFixados();
+  inicializarModoAutoScan();
   bindEventos();
 
   try {

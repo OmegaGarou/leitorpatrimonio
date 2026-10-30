@@ -550,26 +550,34 @@ html, body {
 }
 
 /* Botão Registrar de Alto Destaque */
-.btn-registrar {
+/* Linha com os dois botões: Registrar e Auto Registro */
+.action-buttons-row {
+  display: flex;
+  gap: 10px;
   width: 100%;
+  align-items: stretch;
+  margin-top: 2px;
+}
+
+.btn-registrar {
+  flex: 1.3;
   min-height: 50px;
   border: none;
   border-radius: var(--radius-md);
   background: linear-gradient(135deg, #0284c7 0%, #38bdf8 100%);
   color: #ffffff;
   font-family: var(--font-family);
-  font-size: 1.12rem;
+  font-size: 1.05rem;
   font-weight: 800;
   letter-spacing: 0.04em;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 8px;
   cursor: pointer;
   box-shadow: 0 4px 16px rgba(56, 189, 248, 0.4);
   transition: all 0.2s ease;
   user-select: none;
-  margin-top: 2px;
 }
 
 .btn-registrar:hover {
@@ -583,6 +591,72 @@ html, body {
 .btn-registrar.loading {
   opacity: 0.8;
   pointer-events: none;
+}
+
+/* Botão Auto Registro ON / OFF */
+.btn-auto-scan {
+  flex: 1;
+  min-height: 50px;
+  border: 1.5px solid #475569;
+  border-radius: var(--radius-md);
+  background-color: #334155;
+  color: #cbd5e1;
+  font-family: var(--font-family);
+  font-size: 0.92rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+  padding: 0 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.btn-auto-scan:hover {
+  background-color: #3e4f66;
+  border-color: #64748b;
+}
+
+.btn-auto-scan:active {
+  transform: scale(0.98);
+}
+
+.auto-scan-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: #94a3b8;
+  box-shadow: 0 0 0 2px rgba(148, 163, 184, 0.2);
+  transition: all 0.25s ease;
+  flex-shrink: 0;
+}
+
+/* Estado Ativo: VERDE */
+.btn-auto-scan.active {
+  background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+  border-color: #34d399;
+  color: #ffffff;
+  box-shadow: 0 4px 16px rgba(16, 185, 129, 0.45);
+}
+
+.btn-auto-scan.active:hover {
+  background: linear-gradient(135deg, #047857 0%, #059669 100%);
+}
+
+.btn-auto-scan.active .auto-scan-indicator {
+  background-color: #ffffff;
+  box-shadow: 0 0 8px #ffffff;
+  animation: pulseGreen 1.5s infinite;
+}
+
+@keyframes pulseGreen {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.3); opacity: 0.7; }
+  100% { transform: scale(1); opacity: 1; }
 }
 
 .btn-icon {
