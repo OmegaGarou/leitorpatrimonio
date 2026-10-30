@@ -1049,6 +1049,22 @@ async function processarRegistroCodigo(rawCode, metodo = 'barcode') {
   if (existenteLocal) {
     playBeep('error');
     exibirModalDuplicidade(existenteLocal);
+
+    // Registra mesmo assim no Google Drive com a tag "já coletado" na Coluna H
+    const registroDuplicado = {
+      patrimonio: codigoLimpo,
+      andar: andarSelecionado,
+      localizacao: localSelecionado,
+      setor: setorNome,
+      operador: coletorNome,
+      data: dataAtual,
+      timestamp: Date.now(),
+      observacao: 'já coletado',
+      forceDuplicate: true,
+      pendenteSync: false
+    };
+
+    API.registrar(registroDuplicado).catch(() => {});
     return false;
   }
 
@@ -1068,7 +1084,6 @@ async function processarRegistroCodigo(rawCode, metodo = 'barcode') {
 
   if (apiResult.status === 409) {
     const itemDup = (apiResult.data && apiResult.data.item) ? apiResult.data.item : novoRegistro;
-    await DB.salvar({ ...itemDup, pendenteSync: false });
     playBeep('error');
     exibirModalDuplicidade(itemDup);
     return false;
