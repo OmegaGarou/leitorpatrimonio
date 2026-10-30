@@ -132,6 +132,11 @@ let html5QrCodeScanner = null;
 let isOnlineWithServer = false;
 let isSyncing = false;
 let activeSyncPromise = null;
+let isProcessingRegistration = false;
+let isScanningLoopActive = false;
+let autoScanLoopTimer = null;
+let lastAutoRegisteredCode = '';
+let lastAutoRegisteredTime = 0;
 
 // ==========================================================================
 // 4. CLIENTE GOOGLE DRIVE (APPS SCRIPT WEB APP / AUTO-ENDPOINT)
@@ -703,6 +708,7 @@ async function iniciarCamera() {
     DOM.cameraVideo.onloadedmetadata = () => {
       DOM.cameraVideo.play();
       checarSuporteLanterna();
+      iniciarLoopLeituraAutomatica();
     };
 
   } catch (err) {
@@ -747,7 +753,7 @@ async function alternarLanterna() {
 }
 
 // ==========================================================================
-// 10. MOTOR DE DECODIFICAÇÃO DE CÓDIGOS DE BARRAS (SEM OCR, FOCO EM PRECISÃO)
+// 10. MOTOR DE DECODIFICAÇÃO DE CÓDIGOS DE BARRAS & LEITURA CONTÍNUA AUTOMÁTICA
 // ==========================================================================
 async function initBarcodeDetector() {
   if ('BarcodeDetector' in window) {
@@ -759,6 +765,77 @@ async function initBarcodeDetector() {
     } catch (e) {
       barcodeDetectorInstance = null;
     }
+  }
+}
+
+function iniciarLoopLeituraAutomatica() {
+  if (isScanningLoopActive) return;
+  isScanningLoopActive = true;
+  executarCicloAutoScan();
+}
+
+function pararLoopLeituraAutomatica() {
+  isScanningLoopActive = false;
+  if (autoScanLoopTimer) {
+    clearTimeout(autoScanLoopTimer);
+    autoScanLoopTimer = null;
+  }
+}
+
+async function executarCicloAutoScan() {
+  if (!isScanningLoopActive) return;
+
+  const podeLer =
+    DOM.viewScanner && DOM.viewScanner.style.display !== 'none' &&
+    DOM.cameraVideo && DOM.cameraVideo.readyState >= 2 &&
+    !isProcessingRegistration &&
+    (!DOM.manualInputCard || DOM.manualInputCard.style.display === 'none') &&
+    (!DOM.modalDuplicidade || DOM.modalDuplicidade.style.display === 'none') &&
+    (!DOM.modalCloudConfig || DOM.modalCloudConfig.style.display === 'none');
+
+  if (podeLer) {
+    try {
+      const resultado = await capturarEDecodificarFrame();
+
+      if (resultado && resultado.valido && resultado.code) {
+        const agora = Date.now();
+        const mesmoCodigoRecente =
+          resultado.code === lastAutoRegisteredCode &&
+          agora - lastAutoRegisteredTime < 4000;
+
+        if (!mesmoCodigoRecente) {
+          isProcessingRegistration = true;
+          lastAutoRegisteredCode = resultado.code;
+          lastAutoRegisteredTime = agora;
+
+          // Efeito visual na mira de captura automática
+          const reticle = document.querySelector('.scanner-reticle');
+          if (reticle) {
+            reticle.style.borderColor = '#10b981';
+            reticle.style.boxShadow = '0 0 20px rgba(16, 185, 129, 0.6)';
+            setTimeout(() => {
+              reticle.style.borderColor = '';
+              reticle.style.boxShadow = '';
+            }, 600);
+          }
+
+          try {
+            await processarRegistroCodigo(resultado.code, 'barcode');
+          } finally {
+            setTimeout(() => {
+              isProcessingRegistration = false;
+            }, 800);
+          }
+        }
+      }
+    } catch (e) {
+      // Ignora pequenos erros de frame durante o ciclo contínuo
+    }
+  }
+
+  // Intervalo de 350ms entre análises de quadros (baixo consumo de CPU e excelente resposta)
+  if (isScanningLoopActive) {
+    autoScanLoopTimer = setTimeout(executarCicloAutoScan, 350);
   }
 }
 
@@ -988,6 +1065,7 @@ async function processarRegistroCodigo(rawCode, metodo = 'barcode') {
 async function handleRegistrar() {
   if (DOM.btnRegistrar.classList.contains('loading')) return;
 
+  isProcessingRegistration = true;
   DOM.btnRegistrar.classList.add('loading');
   const originalHtml = DOM.btnRegistrar.innerHTML;
   const setButtonStage = (label) => {
@@ -1023,6 +1101,8 @@ async function handleRegistrar() {
       return;
     }
 
+    lastAutoRegisteredCode = resultado.code;
+    lastAutoRegisteredTime = Date.now();
     await processarRegistroCodigo(resultado.code, 'barcode');
   } catch (err) {
     console.error('Erro ao processar registro:', err);
@@ -1032,6 +1112,9 @@ async function handleRegistrar() {
   } finally {
     DOM.btnRegistrar.classList.remove('loading');
     DOM.btnRegistrar.innerHTML = originalHtml;
+    setTimeout(() => {
+      isProcessingRegistration = false;
+    }, 800);
   }
 }
 
@@ -1077,6 +1160,10 @@ function exibirModalDuplicidade(item) {
 
 function fecharModalDuplicidade() {
   DOM.modalDuplicidade.style.display = 'none';
+  // Pequena pausa para o operador afastar a câmera da etiqueta duplicada
+  setTimeout(() => {
+    isProcessingRegistration = false;
+  }, 1000);
 }
 
 async function abrirModalCloud() {
@@ -1381,12 +1468,14 @@ function alternarMenu() {
 function alternarTela(tela) {
   fecharMenu();
   if (tela === 'coletas') {
+    pararLoopLeituraAutomatica();
     DOM.viewScanner.style.display = 'none';
     DOM.viewColetas.style.display = 'flex';
     renderizarColetas();
   } else {
     DOM.viewColetas.style.display = 'none';
     DOM.viewScanner.style.display = 'flex';
+    iniciarLoopLeituraAutomatica();
   }
 }
 
