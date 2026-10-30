@@ -1419,32 +1419,12 @@ async function renderizarColetas() {
                 ${item.setor ? `<strong style="color:var(--color-accent)">🏷️ ${item.setor}</strong> • ` : ''}${item.operador ? `<strong style="color:var(--color-primary)">👤 ${item.operador}</strong> • ` : ''}Coletado em: ${item.data}
               </span>
             </div>
-            <div class="item-actions">
-              <button class="btn-delete-item" data-code="${item.patrimonio}" title="Excluir este item">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-                  <polyline points="3 6 5 6 21 6"/>
-                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                </svg>
-              </button>
-            </div>
           </div>
         `).join('')}
       </div>
     `;
 
     DOM.coletasContainer.appendChild(cardGrupo);
-  });
-
-  DOM.coletasContainer.querySelectorAll('.btn-delete-item').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      const codigo = e.currentTarget.getAttribute('data-code');
-      if (confirm(`Deseja realmente remover o patrimônio #${codigo}?`)) {
-        await DB.excluir(codigo);
-        await API.excluir(codigo);
-        showToast(`Item #${codigo} removido.`, 'info');
-        renderizarColetas();
-      }
-    });
   });
 }
 
@@ -1570,10 +1550,13 @@ function bindEventos() {
 
   DOM.btnNavColetas.addEventListener('click', () => alternarTela('coletas'));
   DOM.btnVoltarScanner.addEventListener('click', () => alternarTela('scanner'));
-  DOM.btnNavExportar.addEventListener('click', () => {
-    fecharMenu();
-    exportarParaExcel();
-  });
+
+  if (DOM.btnNavExportar) {
+    DOM.btnNavExportar.addEventListener('click', () => {
+      fecharMenu();
+      exportarParaExcel();
+    });
+  }
 
   if (DOM.btnConfigCloud) {
     DOM.btnConfigCloud.addEventListener('click', () => {
@@ -1581,16 +1564,20 @@ function bindEventos() {
       abrirModalCloud();
     });
   }
-  DOM.statusCount.addEventListener('click', () => {
-    fecharMenu();
-    abrirModalCloud();
-  });
-  DOM.btnCloseCloudModal.addEventListener('click', fecharModalCloud);
-  DOM.btnSaveCloudUrl.addEventListener('click', salvarCloudUrl);
-  DOM.btnCopyShareLink.addEventListener('click', copiarLinkEquipe);
-  DOM.modalCloudConfig.addEventListener('click', (e) => {
-    if (e.target === DOM.modalCloudConfig) fecharModalCloud();
-  });
+  if (DOM.statusCount) {
+    DOM.statusCount.addEventListener('click', () => {
+      fecharMenu();
+      abrirModalCloud();
+    });
+  }
+  if (DOM.btnCloseCloudModal) DOM.btnCloseCloudModal.addEventListener('click', fecharModalCloud);
+  if (DOM.btnSaveCloudUrl) DOM.btnSaveCloudUrl.addEventListener('click', salvarCloudUrl);
+  if (DOM.btnCopyShareLink) DOM.btnCopyShareLink.addEventListener('click', copiarLinkEquipe);
+  if (DOM.modalCloudConfig) {
+    DOM.modalCloudConfig.addEventListener('click', (e) => {
+      if (e.target === DOM.modalCloudConfig) fecharModalCloud();
+    });
+  }
 
   DOM.btnTorch.addEventListener('click', alternarLanterna);
   DOM.btnRetryCamera.addEventListener('click', iniciarCamera);
@@ -1634,19 +1621,21 @@ function bindEventos() {
   DOM.filterAndar.addEventListener('change', renderizarColetas);
   DOM.filterLocal.addEventListener('change', renderizarColetas);
 
-  DOM.btnLimparTudo.addEventListener('click', async () => {
-    const total = (await DB.listarTodos()).length;
-    if (total === 0) return;
+  if (DOM.btnLimparTudo) {
+    DOM.btnLimparTudo.addEventListener('click', async () => {
+      const total = (await DB.listarTodos()).length;
+      if (total === 0) return;
 
-    if (confirm(`ATENÇÃO: Deseja apagar todas as ${total} coletas na Planilha do Google Drive e neste celular?`)) {
-      await DB.limparTudo();
-      await API.limpar();
-      showToast('Base de coletas limpa globalmente.', 'info');
-      renderizarColetas();
-      sincronizarComServidor();
-      DOM.lastScannedFeedback.style.display = 'none';
-    }
-  });
+      if (confirm(`ATENÇÃO: Deseja apagar todas as ${total} coletas na Planilha do Google Drive e neste celular?`)) {
+        await DB.limparTudo();
+        await API.limpar();
+        showToast('Base de coletas limpa globalmente.', 'info');
+        renderizarColetas();
+        sincronizarComServidor();
+        DOM.lastScannedFeedback.style.display = 'none';
+      }
+    });
+  }
 
   // Atualização periódica da nuvem a cada 12 segundos
   setInterval(sincronizarComServidor, 12000);
