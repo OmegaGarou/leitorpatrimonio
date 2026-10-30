@@ -129,8 +129,6 @@ let currentTrack = null;
 let isTorchOn = false;
 let barcodeDetectorInstance = null;
 let html5QrCodeScanner = null;
-let ocrWorkerInstance = null;
-let isOcrInitializing = false;
 let isOnlineWithServer = false;
 let isSyncing = false;
 let activeSyncPromise = null;
@@ -144,6 +142,7 @@ let cachedDynamicApiUrl = '';
 let cachedFallbackApiUrl = '';
 
 const PADRAO_DIGITOS_PATRIMONIO = 12;
+const PREFIXO_PADRAO_PATRIMONIO = '10000';
 
 function normalizarPatrimonio(valor) {
   return String(valor || '').trim().replace(/\./g, '');
@@ -151,7 +150,7 @@ function normalizarPatrimonio(valor) {
 
 function ehPatrimonioPadrao12Digitos(valor) {
   const limpo = normalizarPatrimonio(valor);
-  return /^\d{12}$/.test(limpo);
+  return /^\d{12}$/.test(limpo) && limpo.startsWith(PREFIXO_PADRAO_PATRIMONIO);
 }
 
 function isUrlEndpointDiretoValido(url) {
@@ -748,7 +747,7 @@ async function alternarLanterna() {
 }
 
 // ==========================================================================
-// 10. MOTOR DE DECODIFICAÇÃO DE CÓDIGOS DE BARRAS + OCR DO NÚMERO IMPRESSO
+// 10. MOTOR DE DECODIFICAÇÃO DE CÓDIGOS DE BARRAS (SEM OCR, FOCO EM PRECISÃO)
 // ==========================================================================
 async function initBarcodeDetector() {
   if ('BarcodeDetector' in window) {
@@ -763,26 +762,7 @@ async function initBarcodeDetector() {
   }
 }
 
-async function initOcrWorker() {
-  if (ocrWorkerInstance || isOcrInitializing || !window.Tesseract) return ocrWorkerInstance;
-  isOcrInitializing = true;
-  try {
-    const worker = await window.Tesseract.createWorker('eng');
-    await worker.setParameters({
-      tessedit_char_whitelist: '0123456789.- ',
-      tessedit_pageseg_mode: '6'
-    });
-    ocrWorkerInstance = worker;
-    return ocrWorkerInstance;
-  } catch (e) {
-    console.warn('OCR indisponível:', e);
-    return null;
-  } finally {
-    isOcrInitializing = false;
-  }
-}
-
-function gerarCanvasRecorteMira(sourceCanvas, altoContraste = false) {
+function gerarCanvasRecorteMira(sourceCanvas) {
   const sw = sourceCanvas.width;
   const sh = sourceCanvas.height;
   const cropW = Math.floor(sw * 0.86);
@@ -799,81 +779,7 @@ function gerarCanvasRecorteMira(sourceCanvas, altoContraste = false) {
 
   const octx = outCanvas.getContext('2d', { willReadFrequently: true });
   octx.drawImage(sourceCanvas, cropX, cropY, cropW, cropH, 0, 0, targetW, targetH);
-
-  if (altoContraste) {
-    const imgData = octx.getImageData(0, 0, targetW, targetH);
-    const d = imgData.data;
-    let soma = 0;
-    const totalPixels = d.length / 4;
-    for (let i = 0; i < d.length; i += 4) {
-      const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-      d[i] = lum;
-      soma += lum;
-    }
-    const media = soma / totalPixels;
-    const limiar = media * 0.92;
-    for (let i = 0; i < d.length; i += 4) {
-      const v = d[i] < limiar ? 0 : 255;
-      d[i] = v;
-      d[i + 1] = v;
-      d[i + 2] = v;
-    }
-    octx.putImageData(imgData, 0, 0);
-  }
-
   return outCanvas;
-}
-
-function extrairNumeroPatrimonioDeTexto(textoBruto) {
-  if (!textoBruto) return { code: null, partial: '' };
-
-  const texto = String(textoBruto)
-    .replace(/[oO]/g, '0')
-    .replace(/[lI|]/g, '1');
-
-  let melhorParcial = '';
-
-  // 1º: Padrão formatado com pontos abaixo do código de barras (ex: 100.001.896.166 -> 12 dígitos)
-  const regexPontuado = /\b\d{2,3}(?:[\s.]+\d{3}){2,4}\b/g;
-  const matchesPontuados = texto.match(regexPontuado);
-  if (matchesPontuados && matchesPontuados.length > 0) {
-    for (const m of matchesPontuados) {
-      const limpo = m.replace(/\D/g, '');
-      if (ehPatrimonioPadrao12Digitos(limpo)) {
-        return { code: limpo, partial: limpo };
-      }
-      if (limpo.length >= 4 && limpo.length > melhorParcial.length) {
-        melhorParcial = limpo;
-      }
-    }
-  }
-
-  // 2º: Busca sequência exata de 12 dígitos em qualquer linha do OCR
-  const match12Exato = texto.match(/(?:^|\D)(\d{12})(?:\D|$)/);
-  if (match12Exato && match12Exato[1]) {
-    return { code: match12Exato[1], partial: match12Exato[1] };
-  }
-
-  // 3º: Linhas contendo sequências numéricas (com ou sem espaços/pontos)
-  const linhas = texto.split(/[\r\n]+/);
-
-  for (const linha of linhas) {
-    const apenasDigitos = linha.replace(/\D/g, '');
-    if (ehPatrimonioPadrao12Digitos(apenasDigitos)) {
-      return { code: apenasDigitos, partial: apenasDigitos };
-    }
-    // Caso a linha tenha ruído nas bordas mas contenha 12 dígitos iniciados por 100
-    const sub12 = apenasDigitos.match(/100\d{9}/);
-    if (sub12 && sub12[0]) {
-      return { code: sub12[0], partial: sub12[0] };
-    }
-    if (apenasDigitos.length >= 4 && apenasDigitos.length > melhorParcial.length) {
-      melhorParcial = apenasDigitos;
-    }
-  }
-
-  // Se não atingiu os 12 números padrão, NÃO aprova leitura automática (retorna code: null)
-  return { code: null, partial: melhorParcial };
 }
 
 async function tentarHtml5QrcodeEmCanvas(targetCanvas) {
@@ -912,88 +818,56 @@ async function capturarEDecodificarFrame(onProgress) {
   canvas.height = height;
 
   ctx.drawImage(DOM.cameraVideo, 0, 0, width, height);
-  const recorteMira = gerarCanvasRecorteMira(canvas, false);
-  let melhorParcialLido = '';
+  const recorteMira = gerarCanvasRecorteMira(canvas);
 
-  const avaliarCandidatoCamera = (rawVal) => {
-    if (!rawVal) return null;
-    const limpo = normalizarPatrimonio(rawVal).replace(/\D/g, '');
-    if (ehPatrimonioPadrao12Digitos(limpo)) {
-      return limpo;
-    }
-    if (limpo.length > melhorParcialLido.length) {
-      melhorParcialLido = limpo;
-    }
-    return null;
-  };
+  let rawDetectado = null;
 
   // 1ª Tentativa: BarcodeDetector Nativo (Quadro Completo + Recorte da Mira)
   if (barcodeDetectorInstance) {
     try {
       const barcodesFull = await barcodeDetectorInstance.detect(canvas);
-      if (barcodesFull && barcodesFull.length > 0) {
-        for (const b of barcodesFull) {
-          const valido = avaliarCandidatoCamera(b.rawValue);
-          if (valido) return { code: valido, metodo: 'barcode', partial: valido };
-        }
-      }
-      const barcodesCrop = await barcodeDetectorInstance.detect(recorteMira);
-      if (barcodesCrop && barcodesCrop.length > 0) {
-        for (const b of barcodesCrop) {
-          const valido = avaliarCandidatoCamera(b.rawValue);
-          if (valido) return { code: valido, metodo: 'barcode', partial: valido };
+      if (barcodesFull && barcodesFull.length > 0 && barcodesFull[0].rawValue) {
+        rawDetectado = barcodesFull[0].rawValue;
+      } else {
+        const barcodesCrop = await barcodeDetectorInstance.detect(recorteMira);
+        if (barcodesCrop && barcodesCrop.length > 0 && barcodesCrop[0].rawValue) {
+          rawDetectado = barcodesCrop[0].rawValue;
         }
       }
     } catch (e) {}
   }
 
   // 2ª Tentativa: Html5Qrcode Fallback (Recorte da Mira + Quadro Completo)
-  const qrCrop = await tentarHtml5QrcodeEmCanvas(recorteMira);
-  const validoQrCrop = avaliarCandidatoCamera(qrCrop);
-  if (validoQrCrop) {
-    return { code: validoQrCrop, metodo: 'barcode', partial: validoQrCrop };
-  }
-
-  const qrFull = await tentarHtml5QrcodeEmCanvas(canvas);
-  const validoQrFull = avaliarCandidatoCamera(qrFull);
-  if (validoQrFull) {
-    return { code: validoQrFull, metodo: 'barcode', partial: validoQrFull };
-  }
-
-  // 3ª Tentativa: OCR do Número Impresso Abaixo do Código de Barras (Exige 12 dígitos)
-  if (onProgress) onProgress('LENDO 12 DÍGITOS...');
-  try {
-    const worker = await initOcrWorker();
-    if (worker) {
-      const resNormal = await worker.recognize(recorteMira);
-      const extNormal = extrairNumeroPatrimonioDeTexto(resNormal && resNormal.data ? resNormal.data.text : '');
-      if (extNormal.code && ehPatrimonioPadrao12Digitos(extNormal.code)) {
-        return { code: extNormal.code, metodo: 'ocr', partial: extNormal.code };
-      }
-      if (extNormal.partial && extNormal.partial.length > melhorParcialLido.length) {
-        melhorParcialLido = extNormal.partial;
-      }
-
-      // Segunda passada OCR com binarização de alto contraste
-      const recorteContraste = gerarCanvasRecorteMira(canvas, true);
-      const resContraste = await worker.recognize(recorteContraste);
-      const extContraste = extrairNumeroPatrimonioDeTexto(resContraste && resContraste.data ? resContraste.data.text : '');
-      if (extContraste.code && ehPatrimonioPadrao12Digitos(extContraste.code)) {
-        return { code: extContraste.code, metodo: 'ocr', partial: extContraste.code };
-      }
-      if (extContraste.partial && extContraste.partial.length > melhorParcialLido.length) {
-        melhorParcialLido = extContraste.partial;
+  if (!rawDetectado) {
+    const qrCrop = await tentarHtml5QrcodeEmCanvas(recorteMira);
+    if (qrCrop) {
+      rawDetectado = qrCrop;
+    } else {
+      const qrFull = await tentarHtml5QrcodeEmCanvas(canvas);
+      if (qrFull) {
+        rawDetectado = qrFull;
       }
     }
-  } catch (ocrErr) {
-    console.warn('Falha na leitura OCR:', ocrErr);
   }
 
-  return { code: null, metodo: null, partial: melhorParcialLido };
+  if (!rawDetectado) {
+    return { code: null, raw: null, metodo: null };
+  }
+
+  const limpo = normalizarPatrimonio(rawDetectado).replace(/\D/g, '');
+
+  // Validação rigorosa: deve ter 12 dígitos E iniciar com 10000
+  if (ehPatrimonioPadrao12Digitos(limpo)) {
+    return { code: limpo, raw: rawDetectado, metodo: 'barcode', valido: true };
+  }
+
+  // Se o código de barras foi lido mas não é o padrão 12 dígitos com início 10000:
+  // Força o preenchimento manual informando o que foi capturado
+  return { code: null, raw: limpo || rawDetectado, metodo: 'barcode', valido: false };
 }
 
 // ==========================================================================
-// 11. AÇÃO: REGISTRAR (CÂMERA, OCR OU CAMPO MANUAL EM CASO DE ERRO)
+// 11. AÇÃO: REGISTRAR (CÂMERA OU CAMPO MANUAL EM CASO DE ERRO)
 // ==========================================================================
 function abrirCampoManual(mensagem) {
   if (!DOM.manualInputCard) return;
@@ -1025,16 +899,16 @@ async function processarRegistroCodigo(rawCode, metodo = 'barcode') {
     return false;
   }
 
-  // Regra estrita: Leitura por câmera/OCR SÓ aceita o padrão de 12 números.
+  // Regra estrita: Leitura por câmera SÓ aceita o padrão de 12 números iniciando com 10000.
   // Numeração fora do padrão só é aceita quando digitada manualmente (metodo === 'manual').
   if (metodo !== 'manual' && !ehPatrimonioPadrao12Digitos(codigoLimpo)) {
     playBeep('error');
     showToast(
-      `Erro: Numeração incompleta ou fora do padrão (${codigoLimpo} tem ${codigoLimpo.length} dígitos; padrão é ${PADRAO_DIGITOS_PATRIMONIO}). Digite manualmente se desejar registrar.`,
+      `Código de barras fora do padrão (${codigoLimpo}). Deve ter 12 dígitos e iniciar com 10000. Use a digitação manual abaixo:`,
       'error'
     );
     abrirCampoManual(
-      `⚠️ ERRO: Leitura incompleta (${codigoLimpo} — ${codigoLimpo.length}/${PADRAO_DIGITOS_PATRIMONIO} dígitos). Digite manualmente abaixo:`
+      `⚠️ Código de barras fora do padrão (${codigoLimpo}). Digite manualmente abaixo:`
     );
     return false;
   }
@@ -1075,7 +949,7 @@ async function processarRegistroCodigo(rawCode, metodo = 'barcode') {
     return false;
   }
 
-  const sufixoMetodo = metodo === 'ocr' ? ' (lido pelo número)' : metodo === 'manual' ? ' (digitado)' : '';
+  const sufixoMetodo = metodo === 'manual' ? ' (digitado)' : '';
   const resumoLocal = `${andarSelecionado} • ${localSelecionado}${setorNome ? ` • ${setorNome}` : ''}`;
 
   if (apiResult.status === 201) {
@@ -1129,27 +1003,27 @@ async function handleRegistrar() {
   try {
     const resultado = await capturarEDecodificarFrame((etapa) => setButtonStage(etapa));
 
-    if (!resultado || !resultado.code || !ehPatrimonioPadrao12Digitos(resultado.code)) {
+    if (!resultado || !resultado.valido) {
       playBeep('error');
-      const parcial = resultado && resultado.partial ? resultado.partial : '';
-      if (parcial) {
+      const capturado = resultado && resultado.raw ? String(resultado.raw) : '';
+      if (capturado) {
         showToast(
-          `Erro: Leitura incompleta (${parcial} possui ${parcial.length} dígitos; o padrão exige 12 números). Digite manualmente caso queira registrar.`,
+          `Código lido (${capturado}) não inicia com 10000 ou não tem 12 dígitos. Digite manualmente abaixo:`,
           'error'
         );
         abrirCampoManual(
-          `⚠️ ERRO: Numeração incompleta (${parcial} — ${parcial.length}/12 dígitos). Digite manualmente abaixo:`
+          `⚠️ Código lido fora do padrão (${capturado}). Digite o número correto:`
         );
       } else {
-        showToast('Não foi possível ler os 12 números do patrimônio. Digite no campo manual abaixo.', 'error');
+        showToast('Código de barras não identificado. Digite no campo manual abaixo:', 'error');
         abrirCampoManual(
-          '⚠️ Não foi possível ler os 12 dígitos pela câmera — Digite o patrimônio manualmente:'
+          '⚠️ Não foi possível ler o código de barras — Digite o patrimônio manualmente:'
         );
       }
       return;
     }
 
-    await processarRegistroCodigo(resultado.code, resultado.metodo || 'barcode');
+    await processarRegistroCodigo(resultado.code, 'barcode');
   } catch (err) {
     console.error('Erro ao processar registro:', err);
     playBeep('error');
@@ -1637,7 +1511,4 @@ document.addEventListener('DOMContentLoaded', async () => {
   await initBarcodeDetector();
   iniciarCamera();
   registrarServiceWorker();
-  setTimeout(() => {
-    initOcrWorker();
-  }, 1500);
 });
