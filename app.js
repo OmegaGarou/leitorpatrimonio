@@ -143,6 +143,7 @@ let autoScanLoopTimer = null;
 let lastAutoRegisteredCode = '';
 let lastAutoRegisteredTime = 0;
 let persistentRecorteCanvas = null;
+let persistentContrasteCanvas = null;
 let globalAudioCtx = null;
 let cacheMemoriaColetas = [];
 
@@ -893,11 +894,44 @@ async function iniciarCamera() {
   }
 }
 
+async function aplicarOtimizacoesHardwareCamera(track) {
+  if (!track || typeof track.applyConstraints !== 'function') return;
+  try {
+    const capabilities = typeof track.getCapabilities === 'function' ? track.getCapabilities() : {};
+    const advanced = [];
+
+    // 1. Foco contínuo (autofocus em tempo real suportado em Android Chrome e iOS Safari 17+)
+    if (capabilities.focusMode && Array.isArray(capabilities.focusMode)) {
+      if (capabilities.focusMode.includes('continuous')) {
+        advanced.push({ focusMode: 'continuous' });
+      }
+    } else {
+      // Sugestão padrão para navegadores que aplicam a restrição sem expor getCapabilities
+      advanced.push({ focusMode: 'continuous' });
+    }
+
+    // 2. Zoom macro suave (1.25x) para conforto de leitura sem desfocar a curta distância
+    if (capabilities.zoom && typeof capabilities.zoom.min === 'number' && typeof capabilities.zoom.max === 'number') {
+      const targetZoom = Math.min(capabilities.zoom.max, Math.max(capabilities.zoom.min, 1.25));
+      if (targetZoom > capabilities.zoom.min) {
+        advanced.push({ zoom: targetZoom });
+      }
+    }
+
+    if (advanced.length > 0) {
+      await track.applyConstraints({ advanced }).catch(() => {});
+    }
+  } catch (e) {
+    // Ignora silenciosamente caso o hardware ou navegador não suporte restrições avançadas
+  }
+}
+
 function checarSuporteLanterna() {
   if (!cameraStream) return;
   const videoTracks = cameraStream.getVideoTracks();
   if (videoTracks.length > 0) {
     currentTrack = videoTracks[0];
+    aplicarOtimizacoesHardwareCamera(currentTrack);
     const capabilities = currentTrack.getCapabilities ? currentTrack.getCapabilities() : {};
     if (capabilities.torch) {
       DOM.btnTorch.style.display = 'flex';
@@ -1092,6 +1126,36 @@ function gerarCanvasRecorteMira(sourceCanvas) {
   return persistentRecorteCanvas;
 }
 
+// Filtro sob demanda de alto contraste (só executa se a leitura normal falhar em etiquetas difíceis)
+function gerarCanvasRecorteComContraste(sourceCanvas) {
+  const sw = sourceCanvas.width;
+  const sh = sourceCanvas.height;
+  const cropW = Math.floor(sw * 0.86);
+  const cropH = Math.floor(sh * 0.48);
+  const cropX = Math.floor((sw - cropW) / 2);
+  const cropY = Math.floor((sh - cropH) / 2);
+
+  const targetW = Math.min(960, cropW);
+  const scale = targetW / cropW;
+  const targetH = Math.floor(cropH * scale);
+
+  if (!persistentContrasteCanvas) {
+    persistentContrasteCanvas = document.createElement('canvas');
+  }
+  persistentContrasteCanvas.width = targetW;
+  persistentContrasteCanvas.height = targetH;
+
+  const octx = persistentContrasteCanvas.getContext('2d', { willReadFrequently: true });
+  try {
+    octx.filter = 'contrast(1.45) grayscale(1)';
+  } catch (e) {}
+  octx.drawImage(sourceCanvas, cropX, cropY, cropW, cropH, 0, 0, targetW, targetH);
+  try {
+    octx.filter = 'none';
+  } catch (e) {}
+  return persistentContrasteCanvas;
+}
+
 // Decodificação direta nos pixels do Canvas via motor ZXing nativo (sem alocação de Blob ou File)
 function decodificarCanvasSincrono(targetCanvas) {
   if (!html5QrCodeScanner || !targetCanvas) return null;
@@ -1165,6 +1229,22 @@ async function capturarEDecodificarFrame(onProgress) {
     // Se ainda não encontrou, tenta assíncrono caso haja secundary decoder
     if (!rawDetectado) {
       rawDetectado = await decodificarCanvasAssincrono(recorteMira);
+    }
+  }
+
+  // 3ª Tentativa (Sob Demanda): Filtro de contraste em hardware para etiquetas com reflexo, sombra ou desgastadas
+  if (!rawDetectado) {
+    const recorteContraste = gerarCanvasRecorteComContraste(canvas);
+    if (barcodeDetectorInstance) {
+      try {
+        const barcodesEnhanced = await barcodeDetectorInstance.detect(recorteContraste);
+        if (barcodesEnhanced && barcodesEnhanced.length > 0 && barcodesEnhanced[0].rawValue) {
+          rawDetectado = barcodesEnhanced[0].rawValue;
+        }
+      } catch (e) {}
+    }
+    if (!rawDetectado && html5QrCodeScanner) {
+      rawDetectado = decodificarCanvasSincrono(recorteContraste);
     }
   }
 
